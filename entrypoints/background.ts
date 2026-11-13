@@ -8,6 +8,7 @@ import {
   onPermissionsRemoved,
   onTabUpdated,
   onWindowRemoved,
+  onWorkerStart,
   relock,
   resync,
 } from '../src/background/engine';
@@ -25,7 +26,7 @@ export default defineBackground(() => {
     onInstalled(details).catch(logErrors('onInstalled'));
   });
   browser.runtime.onStartup.addListener(() => {
-    resync().catch(logErrors('onStartup'));
+    onWorkerStart().catch(logErrors('onStartup'));
   });
   browser.idle.onStateChanged.addListener((state) => {
     onIdleStateChanged(state).catch(logErrors('idle'));
@@ -55,8 +56,9 @@ export default defineBackground(() => {
   });
 
   // Every worker start re-applies the rules and the idle interval (both can drift, e.g. after a
-  // permission change while the worker slept). An existing unlock is kept, not relocked.
-  resync().catch(logErrors('start'));
+  // permission change while the worker slept) and, while locked, sweeps open extensions pages.
+  // An existing unlock is kept, not relocked.
+  onWorkerStart().catch(logErrors('start'));
 
   // Test-only hook for the e2e build; Vite drops this branch from normal builds.
   if (import.meta.env.MODE === 'e2e') {

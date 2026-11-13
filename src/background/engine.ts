@@ -7,12 +7,41 @@ import { SETTINGS_GUARD_BUILD } from '../lib/flags';
 import type { ErrorCode, Request, Response, State } from '../lib/messages';
 import { backoffMs, createRecord, validatePassword, verifyPassword } from '../lib/password';
 import { isExtensionsPage, safeReturnTo } from '../lib/return-to';
-import { clearUnlocked, isUnlocked, lockPageUrl, setUnlocked, syncBlockRules } from '../lib/rules';
-import { getAuth, getSettings, saveAuth, type Settings } from '../lib/settings';
+import {
+  clearUnlocked,
+  domainsWithHostAccess,
+  isUnlocked,
+  lockPageUrl,
+  setUnlocked,
+  syncBlockRules,
+} from '../lib/rules';
+import { DEFAULT_SETTINGS, getAuth, getSettings as readSettings, saveAuth, type Settings } from '../lib/settings';
 
 export { isExtensionsPage, safeReturnTo };
 
 const MIN_IDLE_SECONDS = 15;
+// storage.session key: when the screen locked without relocking (lockOnScreenLock off).
+const SCREEN_LOCKED_AT_KEY = 'screenLockedAt';
+
+// Last settings read successfully. Only a fallback so a relock still sweeps tabs when storage
+// fails; it is never used to decide whether the browser is unlocked.
+let lastSettings: Settings | null = null;
+
+async function getSettings(): Promise<Settings> {
+  const settings = await readSettings();
+  lastSettings = settings;
+  return settings;
+}
+
+/** The stored settings, or the last known ones (else the defaults) when the read fails. */
+async function settingsOrFallback(): Promise<Settings> {
+  try {
+    return await getSettings();
+  } catch (err) {
+    console.warn('for-my-privacy: settings read failed, using the last known settings', err);
+    return lastSettings ?? DEFAULT_SETTINGS;
+  }
+}
 
 // The session allow rule must exist while unlocked even with no locked domains (otherwise the
 // options page could never leave the locked state). `.invalid` is reserved (RFC 2606) and never
@@ -137,31 +166,92 @@ function guardActive(settings: Settings): boolean {
   return SETTINGS_GUARD_BUILD && settings.settingsGuard;
 }
 
-/** Clears the unlock rule and replaces every open tab of a locked domain with the lock page. */
+async function queryTabs(): Promise<Tab[] | null> {
+  try {
+    return await browser.tabs.query({});
+  } catch (err) {
+    console.warn('relock: could not list tabs', err);
+    return null;
+  }
+}
+
+/** False only when storage positively says no password exists; a failed read counts as set. */
+async function passwordMaybeSet(): Promise<boolean> {
+  try {
+    return (await getAuth()).password !== null;
+  } catch (err) {
+    console.warn('relock: auth read failed, treating the password as set', err);
+    return true;
+  }
+}
+
+/**
+ * Clears the unlock rule and replaces every open tab of a locked domain with the lock page.
+ * Fails closed: a storage or tabs error after the rule is cleared still sweeps the tabs (with the
+ * last known settings), and the first error is rethrown only after the sweep.
+ */
 export function relock(reason: 'idle' | 'screen' | 'windows' | 'manual'): Promise<void> {
   void reason;
   return ruleQueue(async () => {
-    await clearUnlocked();
-    const auth = await getAuth();
-    if (!auth.password) return;
-    const settings = await getSettings();
-    const tabs = await browser.tabs.query({});
-    const locked = new Set(tabsToRelock(tabs, settings.domains));
-    // Replacing a tab keeps every index stable, so tabs are handled in their original order.
-    for (const tab of tabs) {
-      let target: string | null = null;
-      if (locked.has(tab)) {
-        target = lockedTarget(tab.url, settings.domains) ?? lockedTarget(tab.pendingUrl, settings.domains);
-      } else if (guardActive(settings) && tab.url && isExtensionsPage(tab.url)) {
-        // An extensions page left open while unlocked would stay usable after relocking.
-        target = tab.url;
-      }
-      if (target) await replaceWithLockPage(tab, target);
+    // Tabs are listed before the rule is cleared; if that fails, the listing is retried after.
+    let tabs = await queryTabs();
+    let firstError: unknown = null;
+    try {
+      await clearUnlocked();
+    } catch (err) {
+      firstError = err;
     }
+    if (await passwordMaybeSet()) {
+      const settings = await settingsOrFallback();
+      tabs ??= await queryTabs();
+      await sweepTabs(tabs ?? [], settings);
+    }
+    if (firstError) throw firstError;
   });
 }
 
-export async function handleMessage(req: Request, sender: { tab?: { id?: number } }): Promise<Response> {
+async function sweepTabs(tabs: Tab[], settings: Settings): Promise<void> {
+  const locked = new Set(tabsToRelock(tabs, settings.domains));
+  // Replacing a tab keeps every index stable, so tabs are handled in their original order.
+  for (const tab of tabs) {
+    let target: string | null = null;
+    if (locked.has(tab)) {
+      target = lockedTarget(tab.url, settings.domains) ?? lockedTarget(tab.pendingUrl, settings.domains);
+    } else if (guardActive(settings) && tab.url && isExtensionsPage(tab.url)) {
+      // An extensions page left open while unlocked would stay usable after relocking.
+      target = tab.url;
+    }
+    if (target) await replaceWithLockPage(tab, target);
+  }
+}
+
+/**
+ * Worker start and browser start: re-applies the settings and, while locked with the guard on,
+ * sends any open extensions page to the lock page (a session-restored tab may never fire
+ * tabs.onUpdated with a url). An existing unlock is kept.
+ */
+export function onWorkerStart(): Promise<void> {
+  return ruleQueue(async () => {
+    const settings = await getSettings();
+    await applyNow(settings);
+    if (!guardActive(settings) || !(await getAuth()).password || (await isUnlocked())) return;
+    const tabs = (await browser.tabs.query({})).filter((t) => t.url && isExtensionsPage(t.url));
+    for (const tab of tabs) await replaceWithLockPage(tab, tab.url!);
+  });
+}
+
+export interface Sender {
+  tab?: { id?: number };
+  frameId?: number;
+}
+
+// lock.html is web-accessible, so a web page can frame it. A message from a tab must come from
+// its top frame; one without a tab (an extension page not in a tab) has nothing to navigate.
+function fromTopFrame(sender: Sender): boolean {
+  return sender.tab === undefined || sender.frameId === 0;
+}
+
+export async function handleMessage(req: Request, sender: Sender): Promise<Response> {
   switch (req.type) {
     case 'getState':
       return ok();
@@ -179,6 +269,8 @@ export async function handleMessage(req: Request, sender: { tab?: { id?: number 
       });
 
     case 'unlock': {
+      // A framed lock page is ignored: no attempt counted, nothing unlocked or navigated.
+      if (!fromTopFrame(sender)) return fail('wrong_password');
       const result = await authQueue(async () => {
         const check = await checkPassword(req.password);
         if (check !== 'ok') return check;
@@ -219,8 +311,30 @@ export async function onInstalled(details: { reason: string }): Promise<void> {
 }
 
 export async function onIdleStateChanged(state: string): Promise<void> {
-  if (state === 'idle') return relock('idle');
-  if (state === 'locked' && (await getSettings()).lockOnScreenLock) return relock('screen');
+  if (state === 'idle') {
+    await browser.storage.session.remove(SCREEN_LOCKED_AT_KEY).catch(() => {});
+    return relock('idle');
+  }
+  if (state === 'locked') {
+    let lockOnScreenLock = true;
+    try {
+      lockOnScreenLock = (await getSettings()).lockOnScreenLock;
+    } catch (err) {
+      console.warn('idle: settings read failed, relocking', err);
+    }
+    if (lockOnScreenLock) return relock('screen');
+    // While the screen is locked Chrome reports `locked`, never `idle`, so time it here.
+    await browser.storage.session.set({ [SCREEN_LOCKED_AT_KEY]: Date.now() });
+    return;
+  }
+  if (state === 'active') {
+    const stored = await browser.storage.session.get(SCREEN_LOCKED_AT_KEY);
+    const lockedAt = stored[SCREEN_LOCKED_AT_KEY];
+    if (typeof lockedAt !== 'number') return;
+    await browser.storage.session.remove(SCREEN_LOCKED_AT_KEY);
+    const { idleMinutes } = await settingsOrFallback();
+    if (Date.now() - lockedAt > idleMinutes * 60_000) return relock('idle');
+  }
 }
 
 export async function onWindowRemoved(): Promise<void> {
@@ -239,6 +353,10 @@ export async function onTabUpdated(tabId: number, changeInfo: { url?: string }):
 
 export async function onPermissionsRemoved(): Promise<void> {
   await resync();
+  // Ask again only when a domain still in the list lost host access.
+  const { domains } = await getSettings();
+  const granted = await domainsWithHostAccess(domains);
+  if (granted.length === domains.length) return;
   // The cast is needed until the options entrypoint exists and WXT types its path.
   await browser.tabs.create({ url: browser.runtime.getURL('/options.html#permission-lost' as never) });
 }

@@ -2,7 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { browser } from 'wxt/browser';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import background from '../../entrypoints/background';
-import { applySettings, handleMessage, relock, tabsToRelock } from '../../src/background/engine';
+import {
+  applySettings,
+  handleMessage,
+  onIdleStateChanged,
+  onPermissionsRemoved,
+  relock,
+  tabsToRelock,
+} from '../../src/background/engine';
 import { createRecord, verifyPassword } from '../../src/lib/password';
 import { RULE_FALLBACK_BLOCK, RULE_REDIRECT, RULE_UNLOCK } from '../../src/lib/rules';
 import { DEFAULT_SETTINGS, getAuth, saveAuth, saveSettings } from '../../src/lib/settings';
@@ -163,18 +170,33 @@ describe('handleMessage: unlock', () => {
     expect((await getAuth()).failures).toBe(5);
   });
 
+  it('ignores an unlock from a framed lock page: no unlock, no navigation, no attempt counted', async () => {
+    const update = vi.spyOn(browser.tabs, 'update').mockImplementation((async () => ({})) as never);
+    await seedPassword();
+    await saveSettings({ domains: ['example.test'] });
+    for (const sender of [{ tab: { id: 7 }, frameId: 3 }, { tab: { id: 7 } }]) {
+      for (const password of [PW, WRONG]) {
+        const res = await handleMessage({ type: 'unlock', password, returnTo: 'http://example.test/' }, sender);
+        expect(res).toMatchObject({ ok: false, error: 'wrong_password', state: { unlocked: false } });
+      }
+    }
+    expect(await getAuth()).toMatchObject({ failures: 0, blockedUntil: 0 });
+    expect(chrome.state.session).toEqual([]);
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it('sends the lock tab back to a safe returnTo only', async () => {
     const update = vi.spyOn(browser.tabs, 'update').mockImplementation((async () => ({})) as never);
     await seedPassword();
     await saveSettings({ domains: ['example.test'] });
-    await handleMessage({ type: 'unlock', password: PW, returnTo: 'http://www.example.test/x' }, { tab: { id: 7 } });
+    await handleMessage({ type: 'unlock', password: PW, returnTo: 'http://www.example.test/x' }, { tab: { id: 7 }, frameId: 0 });
     expect(update).toHaveBeenCalledWith(7, { url: 'http://www.example.test/x' });
 
     update.mockClear();
-    await handleMessage({ type: 'unlock', password: PW, returnTo: 'https://evil.test/' }, { tab: { id: 7 } });
-    await handleMessage({ type: 'unlock', password: PW, returnTo: 'javascript:alert(1)' }, { tab: { id: 7 } });
+    await handleMessage({ type: 'unlock', password: PW, returnTo: 'https://evil.test/' }, { tab: { id: 7 }, frameId: 0 });
+    await handleMessage({ type: 'unlock', password: PW, returnTo: 'javascript:alert(1)' }, { tab: { id: 7 }, frameId: 0 });
     await handleMessage({ type: 'unlock', password: PW, returnTo: 'http://example.test/' }, {});
-    await handleMessage({ type: 'unlock', password: WRONG, returnTo: 'http://example.test/' }, { tab: { id: 7 } });
+    await handleMessage({ type: 'unlock', password: WRONG, returnTo: 'http://example.test/' }, { tab: { id: 7 }, frameId: 0 });
     expect(update).not.toHaveBeenCalled();
   });
 });
@@ -344,6 +366,38 @@ describe('relock', () => {
     expect(remove.mock.calls.map((c) => c[0])).toEqual([1, 3]);
   });
 
+  it('still sweeps tabs with the last known settings when storage fails after clearing', async () => {
+    await seedUnlocked(['example.test']);
+    const { remove } = stubTabs(TABS);
+    vi.spyOn(browser.storage.local, 'get').mockImplementation((async () => {
+      throw new Error('storage down');
+    }) as never);
+    await relock('idle');
+    expect(chrome.state.session).toEqual([]);
+    expect(remove.mock.calls.map((c) => c[0])).toEqual([1, 3, 4]);
+  });
+
+  it('retries a failed tab listing and still sweeps', async () => {
+    await seedUnlocked(['example.test']);
+    const { remove } = stubTabs(TABS);
+    vi.mocked(browser.tabs.query).mockImplementationOnce((async () => {
+      throw new Error('tabs busy');
+    }) as never);
+    await relock('idle');
+    expect(chrome.state.session).toEqual([]);
+    expect(remove.mock.calls.map((c) => c[0])).toEqual([1, 3, 4]);
+  });
+
+  it('sweeps tabs even when clearing the unlock rule fails, then reports the error', async () => {
+    await seedUnlocked(['example.test']);
+    const { remove } = stubTabs(TABS);
+    chrome.dnr.updateSessionRules.mockImplementationOnce(async () => {
+      throw new Error('dnr down');
+    });
+    await expect(relock('idle')).rejects.toThrow('dnr down');
+    expect(remove.mock.calls.map((c) => c[0])).toEqual([1, 3, 4]);
+  });
+
   it('touches no tabs before a password exists', async () => {
     await saveSettings({ domains: ['example.test'] });
     const { create, remove } = stubTabs(TABS);
@@ -418,6 +472,88 @@ describe('background listeners', () => {
     await vi.waitFor(() => expect(chrome.state.session).toEqual([]));
   });
 
+  it('relocks on screen lock when the settings cannot be read', async () => {
+    start();
+    await seedUnlocked(['example.test']);
+    vi.spyOn(browser.storage.local, 'get').mockImplementation((async () => {
+      throw new Error('storage down');
+    }) as never);
+    await Promise.all(chrome.listeners.idle.map((l) => (l as (s: string) => unknown)('locked')));
+    await vi.waitFor(() => expect(chrome.state.session).toEqual([]));
+  });
+
+  it('with lockOnScreenLock off, relocks on return when the screen stayed locked past idleMinutes', async () => {
+    const fire = onIdleStateChanged;
+    const stored = async () => (await browser.storage.session.get('screenLockedAt')).screenLockedAt;
+    const t0 = 10_000_000;
+    const now = vi.spyOn(Date, 'now').mockReturnValue(t0);
+    await seedUnlocked(['example.test']);
+    await saveSettings({ lockOnScreenLock: false, idleMinutes: 1 });
+
+    // A short screen lock: still unlocked, the stored time is cleared.
+    await fire('locked');
+    expect(await stored()).toBe(t0);
+    expect(chrome.state.session).not.toEqual([]);
+    now.mockReturnValue(t0 + 30_000);
+    await fire('active');
+    expect(await stored()).toBeUndefined();
+    expect(chrome.state.session).not.toEqual([]);
+
+    // A screen lock longer than idleMinutes: relocked on return.
+    await fire('locked');
+    now.mockReturnValue(t0 + 30_000 + 61_000);
+    await fire('active');
+    expect(chrome.state.session).toEqual([]);
+    expect(await stored()).toBeUndefined();
+
+    // `active` without a stored screen lock does nothing.
+    await seedUnlocked(['example.test']);
+    await fire('active');
+    expect(chrome.state.session).not.toEqual([]);
+  });
+
+  it('sweeps open extensions pages at worker start and browser start while locked', async () => {
+    const tabs = [
+      { id: 2, windowId: 1, index: 0, pinned: false, active: false, url: 'https://other.test/' },
+      { id: 4, windowId: 1, index: 1, pinned: false, active: true, url: 'chrome://extensions/?id=abc' },
+    ];
+    vi.spyOn(browser.tabs, 'query').mockImplementation((async () => tabs) as never);
+    const create = vi.spyOn(browser.tabs, 'create').mockImplementation((async () => ({ id: 99 })) as never);
+    const remove = vi.spyOn(browser.tabs, 'remove').mockImplementation((async () => {}) as never);
+    await seedPassword();
+    start();
+    await vi.waitFor(() => expect(remove).toHaveBeenCalledWith(4));
+    expect(create).toHaveBeenCalledWith({
+      windowId: 1,
+      index: 1,
+      pinned: false,
+      active: true,
+      url: `${LOCK}#u=chrome://extensions/?id=abc`,
+    });
+    expect(remove).toHaveBeenCalledTimes(1);
+
+    remove.mockClear();
+    await fakeBrowser.runtime.onStartup.trigger();
+    await vi.waitFor(() => expect(remove).toHaveBeenCalledWith(4));
+  });
+
+  it('leaves extensions pages alone at worker start while unlocked or with the guard off', async () => {
+    const tabs = [{ id: 4, windowId: 1, index: 0, pinned: false, active: true, url: 'chrome://extensions/' }];
+    vi.spyOn(browser.tabs, 'query').mockImplementation((async () => tabs) as never);
+    const remove = vi.spyOn(browser.tabs, 'remove').mockImplementation((async () => {}) as never);
+    await seedUnlocked([]);
+    start();
+    await vi.waitFor(() => expect(chrome.setDetectionInterval).toHaveBeenCalled());
+    await handleMessage({ type: 'lockNow' }, {});
+    remove.mockClear();
+    await saveSettings({ settingsGuard: false });
+    chrome.setDetectionInterval.mockClear();
+    await fakeBrowser.runtime.onStartup.trigger();
+    await vi.waitFor(() => expect(chrome.setDetectionInterval).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(remove).not.toHaveBeenCalled();
+  });
+
   it('relocks when the last normal window closes', async () => {
     start();
     await seedUnlocked(['example.test']);
@@ -472,15 +608,31 @@ describe('background listeners', () => {
 
     contains.mockImplementation((async () => false) as never);
     await Promise.all(chrome.listeners.permRemoved.map((l) => (l as (p: unknown) => unknown)({ origins: [] })));
-    await vi.waitFor(() => expect(domainsOf(chrome.state.dynamic, RULE_REDIRECT)).toBeUndefined());
-    expect(domainsOf(chrome.state.dynamic, RULE_FALLBACK_BLOCK)).toEqual(['example.test']);
+    // The page opens after the resync, so wait for it before looking at the rules.
     await vi.waitFor(() =>
       expect(create).toHaveBeenCalledWith({ url: 'chrome-extension://test-extension-id/options.html#permission-lost' }),
     );
+    expect(domainsOf(chrome.state.dynamic, RULE_REDIRECT)).toBeUndefined();
+    expect(domainsOf(chrome.state.dynamic, RULE_FALLBACK_BLOCK)).toEqual(['example.test']);
 
     contains.mockImplementation((async () => true) as never);
     await Promise.all(chrome.listeners.permAdded.map((l) => (l as (p: unknown) => unknown)({ origins: [] })));
     await vi.waitFor(() => expect(domainsOf(chrome.state.dynamic, RULE_REDIRECT)).toEqual(['example.test']));
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not ask again when the removed permission was for a domain no longer listed', async () => {
+    await seedPassword();
+    await saveSettings({ domains: ['example.test'] });
+    const create = vi.spyOn(browser.tabs, 'create').mockImplementation((async () => ({ id: 9 })) as never);
+    // example.test keeps its access; the removed origin belonged to a domain already deleted.
+    await onPermissionsRemoved();
+    expect(domainsOf(chrome.state.dynamic, RULE_REDIRECT)).toEqual(['example.test']);
+    expect(create).not.toHaveBeenCalled();
+
+    // Once a listed domain loses access, the page opens.
+    vi.mocked(browser.permissions.contains).mockImplementation((async () => false) as never);
+    await onPermissionsRemoved();
     expect(create).toHaveBeenCalledTimes(1);
   });
 

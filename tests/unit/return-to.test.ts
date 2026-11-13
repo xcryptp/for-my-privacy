@@ -24,6 +24,13 @@ describe('safeReturnTo', () => {
     expect(safeReturnTo('https://example.test/', [])).toBeNull();
   });
 
+  it('accepts only the chrome://extensions page itself, not a URL sharing its prefix', () => {
+    expect(safeReturnTo('chrome://extensions-evil/', DOMAINS)).toBeNull();
+    expect(safeReturnTo('chrome://extensionsx', DOMAINS)).toBeNull();
+    expect(safeReturnTo('chrome://extensions/?id=abc', DOMAINS)).toBe('chrome://extensions/?id=abc');
+    expect(safeReturnTo('chrome://extensions', DOMAINS)).toBe('chrome://extensions');
+  });
+
   it('accepts the domain itself, upper case and https', () => {
     expect(safeReturnTo('https://EXAMPLE.test/p?q=1#h', DOMAINS)).toBe('https://example.test/p?q=1#h');
   });
