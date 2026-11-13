@@ -17,9 +17,10 @@ The extension keeps this in `chrome.storage.local`, on your computer only:
 - Your settings: auto-lock minutes, lock on screen lock, extensions-page guard, and whether one unlock opens all locked sites or only the site you unlocked.
 - A count of recent wrong passwords and the time until the next try is allowed.
 - The web origins (scheme, host and port, never a page path) of addresses under your locked sites that a tab or frame has shown, such as `a.b.instagram.com`. The extension needs them to remove those sites' service workers and caches when it locks again. An origin is dropped once its site leaves your list.
+- For each lock screen that the extension opened itself when the lock came back (not one you reached by visiting a locked site), the address of the page it will open after you unlock, kept under a random code. It is kept so the lock screen survives a Chrome restart or an extension update. It is deleted when you unlock, when that tab closes, and at the next lock for any tab that is gone.
 - While the first-run setup is unfinished: the step you reached and the sites you picked so far. They are deleted when you click Finish.
 
-While Chrome is running, it also keeps these short-lived values in `chrome.storage.session`, which Chrome holds in memory and clears when it closes: the time the screen locked (used when "lock when the screen locks" is off); the IDs of the tabs that showed a locked site, or showed one inside a frame, since the last lock; whether the settings (and, when one unlock opens only one site, Chrome's extensions page) are unlocked; and, for each open lock screen, the address of the page it will open after you unlock, kept under a random code so the lock screen itself does not show it. Which sites are unlocked is held as a Chrome session rule, also in memory only.
+While Chrome is running, it also keeps these short-lived values in `chrome.storage.session`, which Chrome holds in memory and clears when it closes: the time the screen locked (used when "lock when the screen locks" is off); the IDs of the tabs that showed a locked site, or showed one inside a frame, since the last lock; whether the settings (and, when one unlock opens only one site, Chrome's extensions page) are unlocked; and, for each open lock screen, the address of the page it will open after you unlock, kept under a random code so the lock screen itself does not show it (for lock screens the extension opened itself, a copy is also in `chrome.storage.local`, see above). Which sites are unlocked is held as a Chrome session rule, also in memory only.
 
 It does not use `chrome.storage.sync`, so nothing is copied to your Google account or to other devices. Removing the extension deletes all of it.
 
@@ -54,9 +55,10 @@ For My Privacy는 어떤 데이터도 수집하거나 보내거나 공유하지 
 - 설정: 자동 잠금 시간, 화면이 잠기면 잠금, 확장 관리 화면 보호, 한 번 풀면 잠긴 사이트가 모두 열릴지 푼 사이트만 열릴지
 - 최근에 비밀번호를 틀린 횟수와 다음 시도까지 기다려야 하는 시간
 - 잠근 사이트 아래의 주소(예: `a.b.instagram.com`)를 탭이나 프레임이 보여 준 적이 있을 때, 그 웹 출처(스킴, 호스트, 포트이며 페이지 경로는 없음). 다시 잠글 때 그 사이트들의 서비스 워커와 캐시를 지우려고 필요합니다. 사이트가 목록에서 빠지면 그 출처도 지워집니다.
+- 잠글 때 확장 프로그램이 직접 연 잠금 화면(잠긴 사이트를 직접 방문해서 만난 잠금 화면은 해당하지 않음)마다, 잠금을 푼 뒤 열 페이지의 주소를 무작위 코드에 묶어 보관합니다. 크롬을 다시 시작하거나 확장 프로그램을 업데이트해도 잠금 화면이 이어지도록 하기 위해서입니다. 잠금을 풀 때, 그 탭을 닫을 때, 그리고 없어진 탭의 주소는 다음 잠금 때 지워집니다.
 - 처음 실행 설정을 끝내지 않았을 때: 도달한 단계와 지금까지 고른 사이트. **완료**를 누르면 지워집니다.
 
-크롬이 켜져 있는 동안에는 잠깐 쓰는 값도 `chrome.storage.session`에 둡니다. 크롬이 메모리에만 두고 크롬을 끄면 지우는 공간입니다. 화면이 잠긴 시각("화면이 잠기면 함께 잠그기"를 껐을 때 씀), 마지막으로 잠긴 뒤 잠긴 사이트를 보여 준 탭(프레임으로 보여 준 탭 포함)의 ID, 설정(그리고 한 번에 한 사이트만 푸는 설정일 때 크롬 확장 프로그램 페이지)이 풀려 있는지, 그리고 열려 있는 잠금 화면마다 잠금을 푼 뒤 열 페이지의 주소입니다. 이 주소는 무작위 코드에 묶어 두어 잠금 화면에는 보이지 않습니다. 어떤 사이트가 풀려 있는지는 크롬의 세션 규칙으로 보관하며, 이것도 메모리에만 있습니다.
+크롬이 켜져 있는 동안에는 잠깐 쓰는 값도 `chrome.storage.session`에 둡니다. 크롬이 메모리에만 두고 크롬을 끄면 지우는 공간입니다. 화면이 잠긴 시각("화면이 잠기면 함께 잠그기"를 껐을 때 씀), 마지막으로 잠긴 뒤 잠긴 사이트를 보여 준 탭(프레임으로 보여 준 탭 포함)의 ID, 설정(그리고 한 번에 한 사이트만 푸는 설정일 때 크롬 확장 프로그램 페이지)이 풀려 있는지, 그리고 열려 있는 잠금 화면마다 잠금을 푼 뒤 열 페이지의 주소입니다. 이 주소는 무작위 코드에 묶어 두어 잠금 화면에는 보이지 않습니다(확장 프로그램이 직접 연 잠금 화면의 주소는 위의 `chrome.storage.local`에도 사본이 있습니다). 어떤 사이트가 풀려 있는지는 크롬의 세션 규칙으로 보관하며, 이것도 메모리에만 있습니다.
 
 `chrome.storage.sync`는 쓰지 않으므로 Google 계정이나 다른 기기로 복사되지 않습니다. 확장 프로그램을 삭제하면 모두 지워집니다.
 
@@ -91,9 +93,10 @@ For My Privacy は、データを収集・送信・共有しません。ネッ�
 - 設定：自動ロックの時間、画面ロック時にロック、拡張機能ページの保護、1回の解除でロックしたサイトがすべて開くか、解除したサイトだけが開くか
 - 最近パスワードを間違えた回数と、次に試せるまでの待ち時間
 - ロック対象サイトの下にあるアドレス（たとえば `a.b.instagram.com`）をタブやフレームが表示したことがあるときの、そのウェブのオリジン（スキーム、ホスト、ポート。ページのパスは含みません）。再ロックのときに、それらのサイトのサービスワーカーとキャッシュを消すために必要です。サイトが一覧から外れると、そのオリジンも消えます。
+- 再ロックのときに拡張機能が自分で開いたロック画面（ロック対象サイトを自分で開いて出たロック画面は含みません）ごとの、解除後に開くページのアドレスを、ランダムなコードに結び付けて保存します。Chrome の再起動や拡張機能の更新のあとでもロック画面が続くようにするためです。ロックを解除したとき、そのタブを閉じたとき、そして、なくなったタブの分は次のロックのときに削除されます。
 - 初回のセットアップが終わっていないとき：到達したステップと、そこまでに選んだサイト。**完了**を押すと消えます。
 
-Chrome の起動中は、一時的な値も `chrome.storage.session` に置きます。Chrome がメモリにだけ置き、Chrome を閉じると消す場所です。画面がロックされた時刻（「画面がロックされたら、サイトもロックする」をオフにしたときに使用）、前回のロック以降にロック対象サイトを表示した（フレームの中に表示した場合を含む）タブの ID、設定（および、1回の解除で1つのサイトだけが開く設定のときは Chrome の拡張機能ページ）が解除されているかどうか、そして、開いているロック画面ごとの、解除したあとに開くページのアドレスです。このアドレスはランダムなコードに結び付けて保管するので、ロック画面には表示されません。どのサイトが解除されているかは、Chrome のセッション規則として保持し、これもメモリにだけあります。
+Chrome の起動中は、一時的な値も `chrome.storage.session` に置きます。Chrome がメモリにだけ置き、Chrome を閉じると消す場所です。画面がロックされた時刻（「画面がロックされたら、サイトもロックする」をオフにしたときに使用）、前回のロック以降にロック対象サイトを表示した（フレームの中に表示した場合を含む）タブの ID、設定（および、1回の解除で1つのサイトだけが開く設定のときは Chrome の拡張機能ページ）が解除されているかどうか、そして、開いているロック画面ごとの、解除したあとに開くページのアドレスです。このアドレスはランダムなコードに結び付けて保管するので、ロック画面には表示されません（拡張機能が自分で開いたロック画面の分は、上の `chrome.storage.local` にもコピーがあります）。どのサイトが解除されているかは、Chrome のセッション規則として保持し、これもメモリにだけあります。
 
 `chrome.storage.sync` は使わないので、Google アカウントや他の端末にはコピーされません。拡張機能を削除すると、すべて消えます。
 

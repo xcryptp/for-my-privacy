@@ -4,7 +4,9 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-11-13
+## [0.1.0] - Unreleased (in development)
+
+Draft in development: nothing is released or on the Chrome Web Store yet. When 0.1.0 is released, remove this line and put the release date in the heading (`## [0.1.0] - YYYY-MM-DD`).
 
 ### Added
 
@@ -23,6 +25,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - Extensions-page guard: while locked, opening `chrome://extensions` shows the lock screen. It can be switched off in Settings and is left out of the `noguard` build.
 - Site access is asked for one site at a time, when you add it. Sites stay blocked even if site access is later withdrawn in Chrome's toolbar menu.
 - English, Korean and Japanese screens.
+- A user guide in English, Korean and Japanese (`docs/usage.md`, `docs/usage.ko.md`, `docs/usage.ja.md`) with screenshots.
 - README in English, Korean and Japanese, a privacy policy, and optional Chrome policy files (macOS configuration profile, Windows registry file) to turn off DevTools and force-install the extension.
 - Two release builds: the store build and the `noguard` build.
 

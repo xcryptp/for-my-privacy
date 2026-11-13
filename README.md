@@ -6,6 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Version 0.1.0](https://img.shields.io/badge/version-0.1.0-brightgreen.svg)](CHANGELOG.md)
+[![Status: in development](https://img.shields.io/badge/status-in%20development-orange.svg)](CHANGELOG.md)
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-4285F4.svg?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/develop/migrate/what-is-mv3)
 [![Chrome 120+](https://img.shields.io/badge/Chrome-120%2B-4285F4.svg?logo=googlechrome&logoColor=white)](#install)
 
@@ -15,6 +16,10 @@
 
 </div>
 
+> **Status: in development. Version 0.1.0 draft.** There is no release yet, and it is not on the Chrome Web Store. For now, [install it from source](#install).
+
+**New here? Read the [user guide](docs/usage.md).** It covers install, first run, locking and unlocking, settings and troubleshooting, with screenshots.
+
 ## Features
 
 - **Locks whole sites.** Paste `instagram.com` or any full link. The site and every address under it lock, at any depth (`www.instagram.com`, `help.instagram.com`, `a.b.instagram.com`). A site is always locked as a whole: a link to one page or subdomain locks the entire registrable domain. A Naver blog link locks all of `naver.com`, and a Gmail link locks all of `google.com`, Search included. One subdomain cannot be locked on its own. Sites on shared hosts such as `user.github.io` count as their own site. Look-alike names such as `notinstagram.com` are left alone.
@@ -23,7 +28,7 @@
 - **You choose how far one unlock reaches.** By default one unlock opens every locked site. In Security you can switch to opening only the site you unlocked.
 - **Locks again by itself.** After minutes without keyboard or mouse input, when the screen locks, when the last Chrome window closes, and when Chrome restarts.
 - **Quick lock.** The toolbar button (**Lock now**) and the keyboard shortcut Alt+Shift+L lock everything at once, without a password.
-- **Open tabs lock too.** When the lock comes back, tabs of locked sites are replaced by the lock screen, and Back does not bring the old page back. A locked site shown inside another page is blocked, and pages that embed a locked site are reloaded when the lock comes back.
+- **Open tabs lock too.** When the lock comes back, tabs of locked sites are replaced by the lock screen, and Back does not bring the old page back. A locked site shown inside another page is blocked, and pages that embed a locked site are reloaded when the lock comes back. A `blob:` page or an empty `about:blank` tab opened by a locked site is locked too, and a lock screen that Chrome restores after a restart or an extension update still knows its site.
 - **Saved copies are removed.** A site's own service workers and caches are removed each time the lock comes back, so a site cannot answer from its saved copy. Cookies and logins are left alone.
 - **Brute-force wait.** The lock screen says how many tries are left. After 5 wrong tries a wait starts at 30 seconds and doubles with each try, up to 15 minutes, with a countdown.
 - **First-run setup in four steps.** Welcome, password, choose sites (one-tap choices for common sites), auto-lock. A forgotten password has help on the lock screen.
@@ -55,31 +60,42 @@ flowchart LR
 - Locked sites are blocked with Chrome's own `declarativeNetRequest` rules. A redirect rule (the higher priority) sends the page request to the extension's lock page. A block rule for the same domains has a lower priority and is the backup: it covers every kind of request, so it keeps working even if site access is withdrawn from the toolbar menu (the site shows a blocked page, never its content), and it blocks a locked site inside a frame on another page and anything a saved copy of a locked page asks for.
 - Unlocking adds one higher-priority allow rule that lives only for the browser session. It is the only "unlocked" state there is. It lists every locked site, or only the one you unlocked, depending on the Security setting **When I unlock a site**. Changing that setting removes the rule, so your sites lock again (the settings stay open). Restarting Chrome clears the rule, so Chrome starts locked.
 - Idle detection uses Chrome's `idle` API and counts keyboard and mouse input on the whole computer, not only in Chrome.
-- Re-locking removes the allow rule and replaces each open tab of a locked site with a new lock-page tab in the same window and position. A new tab is used because changing the address of an old tab would let Back bring its page back from Chrome's cache. For the same reason, a tab that showed a locked site earlier and has since moved on to another site is reopened as a new tab at the same address, without its history. An unlock sends the open lock screens whose site it opened back to that site. The settings lock again too.
+- Re-locking removes the allow rule and replaces each open tab of a locked site with a new lock-page tab in the same window and position. A new tab is used because changing the address of an old tab would let Back bring its page back from Chrome's cache. For the same reason, a tab that showed a locked site earlier and has since moved on to another site is reopened as a new tab at the same address, without its history. An unlock sends the open lock screens whose site it opened back to that site. The settings lock again too. A `blob:` page, and an empty `about:blank` or `about:srcdoc` tab opened by a tab that showed a locked site, are replaced as well (they may hold that site's content).
 - A site's own service worker can answer a page without the request ever reaching Chrome's rules, so the rules alone would miss it. Each re-lock, each Chrome start and each newly locked site therefore removes the service workers and cache storage of the locked sites (the `browsingData` permission, which Chrome shows no warning for). Cookies, logins and other site data stay. This covers the site's own address, its `www.` and `m.` addresses, and every other address under it that a tab or frame has shown; the extension keeps those addresses in local storage for this.
-- The `webNavigation` permission lets the extension see frames. When the lock comes back, every tab that shows a locked site inside a frame is reloaded and keeps its history; a tab that cannot be reloaded (for example while a "leave this page?" question is open) is replaced instead. A frame that still appears while locked gets the same treatment, and if it comes back once more, its tab shows the lock page.
+- The `webNavigation` permission lets the extension see frames. When the lock comes back, only a tab that shows a locked site inside a frame at that moment is reloaded, and it keeps its history. If the tab's own "Leave site?" or form-resubmission question holds the reload back, the tab is closed and opened again at the same address after about 3 seconds, and anything typed and not saved in it is lost. A frame that still appears while locked gets the same treatment, and if it comes back once more, its tab shows the lock page.
 - The `tabs` permission lets the extension notice a page of a locked site that loaded anyway, for example one answered from a service worker, or one on a site whose access was withdrawn. The tab is replaced by the lock page. A split second of the old page, or of Chrome's blocked page, can show first.
-- The lock page gets only a random code. The page address you were going to open stays in the extension's session memory, tied to that tab, until you unlock or the tab closes.
+- The lock page gets only a random code. The page address you were going to open stays tied to that tab until you unlock or the tab closes: in the extension's session memory, and, for a lock tab the extension opened itself when the lock came back, also in `chrome.storage.local`, so the tab still knows its site after a Chrome restart or an extension update. A stored address is deleted when its tab is gone (at the next lock at the latest).
 
 </details>
 
 ## Install
 
-> **Chrome Web Store: coming soon.** Until then, install the release zip by hand. It takes about a minute. Chrome shows a notice about developer-mode extensions when it starts; that is normal for extensions installed this way.
+> **Not on the Chrome Web Store yet.** This is an in-development draft (version 0.1.0) with no release, so you build the extension from source and load the built folder into Chrome. It takes about five minutes. The [user guide](docs/usage.md#install) has the same steps with notes for macOS and Windows.
 
-1. Download `for-my-privacy-0.1.0-chrome.zip` from [Releases](https://github.com/xcryptp/for-my-privacy/releases). (The `-noguard` zip is the same extension without the extensions-page guard.)
-2. Unzip it.
-   - macOS: double-click the zip in Finder.
-   - Windows: right-click the zip, choose **Extract All**, then **Extract**.
-3. Move the unzipped folder somewhere permanent (for example your Documents folder). Chrome reads the extension from this folder every time it starts, so do not delete or move it later.
-4. In Chrome, open `chrome://extensions`.
-5. Turn on **Developer mode** (top right).
-6. Click **Load unpacked** and choose the folder that contains `manifest.json`.
-7. The settings page opens and walks you through a short setup (see [Use](#use)).
+You need [Git](https://git-scm.com/), [Node.js](https://nodejs.org/) 22 or newer, and Chrome 120 or newer.
+
+1. Get the code and build it:
+
+   ```sh
+   git clone https://github.com/xcryptp/for-my-privacy.git
+   cd for-my-privacy
+   npm ci
+   npm run build
+   ```
+
+   This creates the folder `.output/chrome-mv3`. (`npm run build:noguard` makes `.output/chrome-mv3-noguard`, the same extension without the extensions-page guard.)
+2. In Chrome, open `chrome://extensions`.
+3. Turn on **Developer mode** (top right).
+4. Click **Load unpacked** and choose the `.output/chrome-mv3` folder (the one that contains `manifest.json`). On macOS, press Command+Shift+. in the chooser to show folders whose names start with a dot.
+5. The settings page opens and walks you through a short setup (see [Use](#use)).
+
+Keep the folder where it is: Chrome reads the extension from it every time it starts, so do not delete or move it later. Chrome shows a notice about developer-mode extensions when it starts; that is normal for extensions installed this way. A Chrome Web Store listing may come later; it is not available yet.
 
 Wherever Chrome shows an extension's permissions (the store page, the extension's details), it shows two warnings. `declarativeNetRequest` shows as "**Block content on any page**": For My Privacy needs it to block locked sites even when site access is withdrawn, and it only acts on the sites you add. `tabs` and `webNavigation` share the second one, "**Read your browsing history**": they let the extension find tabs and frames that show a locked site. It compares their addresses with your list of locked sites and sends nothing anywhere. The other permissions, `storage`, `idle` and `browsingData`, have no warning in Chrome. Site access is optional and asked for one site at a time.
 
 ## Use
+
+A step-by-step guide with screenshots is in the [user guide](docs/usage.md).
 
 1. **Set up.** After you load the extension, the settings page opens with four steps. Click **Get started**. Create a password (the page warns that it cannot be recovered). Under **Choose sites to lock**, tap the sites you want (instagram.com, facebook.com, x.com, tiktok.com, youtube.com) or type another one under **Another site**, then click **Next** (**Skip** if you choose none). Chrome asks to allow access to the chosen sites; choose Allow. Last, set **Lock again automatically** and click **Finish**. Your sites are locked right away. The password you just made does not unlock them.
 2. **Add or remove a site later.** Open Settings (on the lock screen click **Settings**, in the toolbar popup click **Open settings**, or right-click the extension icon and choose **Options**). The settings page opens on **Sites**. Type a site or paste a full address under **Locked sites**, and click **Add**. A line under the box says what will lock, for example all of `naver.com` for a Naver blog link. Chrome asks to allow access to that site; allow it. **Remove** takes a site off the list.
@@ -124,7 +140,7 @@ Chrome has official management policies. Two of them close the biggest gaps abov
 | `DeveloperToolsAvailability` | `2` | Turns Chrome DevTools off everywhere |
 | `ExtensionInstallForcelist` | `<EXTENSION_ID>;https://clients2.google.com/service/update2/crx` | Installs the extension from the Chrome Web Store and keeps it: it cannot be switched off or removed from the toolbar menu |
 
-> **Warning: not verified yet.** `DeveloperToolsAvailability = 2` may also switch off Developer mode on `chrome://extensions` (Chrome's `ExtensionDeveloperModeSettings` policy may follow it when it is not set; this is unverified). If it does, an unpacked install (see [Install](#install)) could no longer be reloaded or updated, and Chrome might even disable it. **These policies are mainly meant for a store install.** If you installed the unpacked zip, remove the policy before you update it. The unpacked install together with the DevTools-only policy has not been tested; it is item 15 in [`docs/manual-checks.md`](docs/manual-checks.md).
+> **Warning: not verified yet.** `DeveloperToolsAvailability = 2` may also switch off Developer mode on `chrome://extensions` (Chrome's `ExtensionDeveloperModeSettings` policy may follow it when it is not set; this is unverified). If it does, an unpacked install (see [Install](#install)) could no longer be reloaded or updated, and Chrome might even disable it. **These policies are mainly meant for a store install.** If you installed the unpacked build, remove the policy before you update it. The unpacked install together with the DevTools-only policy has not been tested; it is item 15 in [`docs/manual-checks.md`](docs/manual-checks.md).
 
 Ready-made files:
 
@@ -154,7 +170,7 @@ These policies are real Chrome management. If you are the computer's administrat
 
 ## Privacy
 
-Nothing leaves your computer. The password hash, your site list, your settings, the wrong-try count and wait, and the addresses of locked-site subdomains that tabs showed (kept to remove their saved workers and caches) are kept in `chrome.storage.local`; there are no network requests and no analytics. Details, in English, Korean and Japanese: [PRIVACY.md](PRIVACY.md).
+Nothing leaves your computer. The password hash, your site list, your settings, the wrong-try count and wait, and the addresses of locked-site subdomains that tabs showed (kept to remove their saved workers and caches) and the page address that a lock screen opened by the extension will open after you unlock (kept so the lock screen survives a Chrome restart or an update; deleted when the lock screen closes) are kept in `chrome.storage.local`; there are no network requests and no analytics. Details, in English, Korean and Japanese: [PRIVACY.md](PRIVACY.md).
 
 ## Development
 
@@ -175,7 +191,7 @@ npm run zip             # store zip; npm run zip:noguard for the noguard zip
 
 The first browser test run needs Chromium: `npx playwright install chromium`.
 
-To try a build, load `.output/chrome-mv3` with **Load unpacked** as in [Install](#install). Screenshots in this README are made by `node scripts/screenshots.ts` after `npm run build` (it runs a `.ts` file directly, which needs Node 22.18+ or 23.6+). Hand checks that cannot be automated are in [`docs/manual-checks.md`](docs/manual-checks.md). Licenses of the few third-party pieces inside the build: [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).
+To try a build, load `.output/chrome-mv3` with **Load unpacked** as in [Install](#install). Screenshots in this README are made by `node scripts/screenshots.ts` after `npm run build`, and those in the [user guide](docs/usage.md) by `node scripts/usage-screenshots.ts` (it runs a `.ts` file directly, which needs Node 22.18+ or 23.6+). Hand checks that cannot be automated are in [`docs/manual-checks.md`](docs/manual-checks.md). Licenses of the few third-party pieces inside the build: [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).
 
 </details>
 

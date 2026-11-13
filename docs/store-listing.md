@@ -35,7 +35,7 @@ Why Chrome shows these notices
 Chrome shows the declarativeNetRequest permission as "Block content on any page". For My Privacy uses it only for the sites you add. It needs this permission so that a locked site stays blocked even if its site access is later withdrawn from the toolbar menu; the site then shows Chrome's blocked page, never its content. Chrome shows the tabs and webNavigation permissions as "Read your browsing history". The extension uses them only to find tabs and frames that show a locked site and to put the lock screen there. It compares addresses with your list and sends nothing anywhere.
 
 Private
-Nothing is collected or sent. No network requests, no analytics, no account. The password hash, your site list, your settings and a few addresses of locked sites' subdomains (to remove their saved workers and caches) stay in Chrome's storage on your computer.
+Nothing is collected or sent. No network requests, no analytics, no account. The password hash, your site list, your settings and a few addresses of locked sites' subdomains (to remove their saved workers and caches) and the page address each lock screen will open after you unlock (until you unlock or that tab closes) stay in Chrome's storage on your computer.
 
 What it does not stop: a person who controls your computer, for example its administrator, or someone using Chrome DevTools, starting Chrome with extensions off or editing Chrome's profile files. A locked site's saved page can show for a split second in some cases, and page titles stay in Chrome's history. Any website can also find out that the extension is installed, because the lock page is web-accessible. The README lists these limits.
 
@@ -50,7 +50,7 @@ Lock the websites the user chooses behind a password, and lock them again when t
 | Permission | Justification |
 | --- | --- |
 | `declarativeNetRequest` | Holds the rules that send page requests for the sites the user locked to the extension's lock page, block those sites inside frames and for every other kind of request, and let them through for the rest of the browser session after the right password. The rules list only the user's sites. |
-| `storage` | Keeps these in `chrome.storage.local` on the device: the password hash and the wrong-try count and wait; the list of locked sites and the settings (including how far one unlock reaches); the origins of locked sites' subdomains that tabs or frames showed (kept across sessions so their service workers can be removed, and dropped when a site leaves the list); and the first-run setup progress until it is finished. While Chrome runs, `chrome.storage.session` also holds the time the screen locked, the IDs of tabs that showed a locked site or embedded one in a frame, whether the settings and the extensions page are unlocked, and the page address each lock screen will open after unlocking; Chrome clears it when it closes. Nothing leaves the device. |
+| `storage` | Keeps these in `chrome.storage.local` on the device: the password hash and the wrong-try count and wait; the list of locked sites and the settings (including how far one unlock reaches); the origins of locked sites' subdomains that tabs or frames showed (kept across sessions so their service workers can be removed, and dropped when a site leaves the list); the page address each lock screen that the extension opened itself will open after unlocking (kept so the lock screen survives a Chrome restart or an update; deleted when the user unlocks, when that tab closes, and at the next lock for any tab that is gone); and the first-run setup progress until it is finished. While Chrome runs, `chrome.storage.session` also holds the time the screen locked, the IDs of tabs that showed a locked site or embedded one in a frame, whether the settings and the extensions page are unlocked, and the page address each lock screen will open after unlocking; Chrome clears it when it closes. Nothing leaves the device. |
 | `idle` | Notices when there has been no keyboard or mouse input for the chosen number of minutes, and when the screen locks, so the sites lock again. |
 | `tabs` | Reads tab addresses to find tabs that show, or earlier showed, a locked site; replaces them with the lock page when the lock comes back or when a locked page loaded anyway; sends lock pages back to their site after unlocking; and shows the lock page instead of `chrome://extensions` while locked (the guard, which the user can turn off). |
 | `webNavigation` | Sees the frames of a page, so a locked site embedded in another page is found: when the lock comes back, the page that embeds it is reloaded, and a frame of a locked site that still loads while locked is dealt with. Chrome shows the same "Read your browsing history" notice as for `tabs`. |
@@ -66,7 +66,7 @@ No. All code is inside the extension package; nothing is loaded from anywhere el
 ### Data use
 
 - Collected data: none. The extension does not collect or send any of the listed kinds of data; it makes no network requests.
-- Stored on the device only: the password hash, the site list, the settings, the wrong-try count and the origins of locked sites' subdomains that tabs showed (see the storage justification above).
+- Stored on the device only: the password hash, the site list, the settings, the wrong-try count and the origins of locked sites' subdomains that tabs showed, and the address a lock screen opened by the extension will open after unlocking (see the storage justification above).
 - Certifications: the data is not sold or transferred to third parties, not used for anything unrelated to the single purpose, and not used to decide creditworthiness or for lending.
 
 ## 한국어
@@ -98,7 +98,7 @@ For My Privacy는 내가 고른 웹사이트에 비밀번호를 겁니다. 막�
 크롬은 declarativeNetRequest 권한을 "모든 페이지의 콘텐츠 차단"이라고 표시합니다. For My Privacy는 이 권한을 내가 추가한 사이트에만 씁니다. 나중에 툴바 메뉴에서 사이트 접근 권한이 빠져도 잠긴 사이트를 계속 막으려면 이 권한이 필요합니다. 그때 그 사이트에는 내용 대신 크롬의 차단 화면이 뜹니다. 크롬은 tabs와 webNavigation 권한을 "Read your browsing history"(방문 기록 읽기)로 표시합니다. 이 권한은 잠긴 사이트를 보여 주는 탭과 프레임을 찾아 그 자리에 잠금 화면을 띄우는 데만 씁니다. 주소를 내 목록과 견주기만 하고 어디로도 보내지 않습니다.
 
 개인정보
-아무것도 수집하거나 보내지 않습니다. 네트워크 요청도, 분석 도구도, 계정도 없습니다. 비밀번호 해시, 사이트 목록, 설정, 그리고 저장된 서비스 워커와 캐시를 지우기 위한 잠금 사이트 하위 주소 몇 개는 내 컴퓨터의 크롬 저장 공간에만 남습니다.
+아무것도 수집하거나 보내지 않습니다. 네트워크 요청도, 분석 도구도, 계정도 없습니다. 비밀번호 해시, 사이트 목록, 설정, 그리고 저장된 서비스 워커와 캐시를 지우기 위한 잠금 사이트 하위 주소 몇 개, 잠금 화면이 잠금을 푼 뒤 열 페이지의 주소(잠금을 풀거나 그 탭을 닫을 때까지)는 내 컴퓨터의 크롬 저장 공간에만 남습니다.
 
 막지 못하는 것: 컴퓨터 자체를 장악한 사람입니다. 예를 들어 컴퓨터 관리자, 크롬 개발자 도구를 쓰는 사람, 확장 프로그램을 끄고 크롬을 실행하는 사람, 크롬 프로필 파일을 고치는 사람입니다. 경우에 따라 잠긴 사이트의 저장된 페이지가 잠깐 보일 수 있고, 페이지 제목은 크롬 방문 기록에 남습니다. 잠금 화면이 웹에서 접근할 수 있는 페이지라서, 어떤 웹사이트든 이 확장 프로그램이 설치된 것은 알아낼 수 있습니다. 자세한 한계는 README에 있습니다.
 
@@ -113,7 +113,7 @@ For My Privacy는 내가 고른 웹사이트에 비밀번호를 겁니다. 막�
 | 권한 | 이유 |
 | --- | --- |
 | `declarativeNetRequest` | 사용자가 잠근 사이트의 페이지 요청을 확장 프로그램의 잠금 화면으로 보내고, 다른 페이지에 끼워 넣은 그 사이트와 그 밖의 모든 종류의 요청을 막고, 비밀번호가 맞으면 브라우저를 끌 때까지 통과시키는 규칙을 둡니다. 규칙에는 사용자가 추가한 사이트만 들어갑니다. |
-| `storage` | 아래 내용을 이 기기의 `chrome.storage.local`에 보관합니다. 비밀번호 해시와 틀린 횟수·대기 시간, 잠긴 사이트 목록과 설정(한 번 푸는 범위 포함), 탭이나 프레임이 보여 준 잠긴 사이트 하위 주소의 출처(서비스 워커를 지우려고 세션을 넘겨 보관하며, 사이트가 목록에서 빠지면 지움), 끝나기 전까지의 처음 실행 설정 진행 상태입니다. 크롬이 켜져 있는 동안에는 화면이 잠긴 시각, 잠긴 사이트를 보여 주거나 프레임으로 넣은 탭의 ID, 설정과 확장 프로그램 페이지가 풀려 있는지, 잠금 화면마다 잠금을 푼 뒤 열 페이지의 주소도 `chrome.storage.session`에 두며, 크롬을 끄면 지워집니다. 기기 밖으로 나가는 것은 없습니다. |
+| `storage` | 아래 내용을 이 기기의 `chrome.storage.local`에 보관합니다. 비밀번호 해시와 틀린 횟수·대기 시간, 잠긴 사이트 목록과 설정(한 번 푸는 범위 포함), 탭이나 프레임이 보여 준 잠긴 사이트 하위 주소의 출처(서비스 워커를 지우려고 세션을 넘겨 보관하며, 사이트가 목록에서 빠지면 지움), 확장 프로그램이 직접 연 잠금 화면마다 잠금을 푼 뒤 열 페이지의 주소(크롬을 다시 시작하거나 업데이트해도 잠금 화면이 이어지도록 보관하며, 잠금을 풀거나 그 탭을 닫을 때, 없어진 탭의 것은 다음 잠금 때 지움), 끝나기 전까지의 처음 실행 설정 진행 상태입니다. 크롬이 켜져 있는 동안에는 화면이 잠긴 시각, 잠긴 사이트를 보여 주거나 프레임으로 넣은 탭의 ID, 설정과 확장 프로그램 페이지가 풀려 있는지, 잠금 화면마다 잠금을 푼 뒤 열 페이지의 주소도 `chrome.storage.session`에 두며, 크롬을 끄면 지워집니다. 기기 밖으로 나가는 것은 없습니다. |
 | `idle` | 정한 시간 동안 키보드·마우스 입력이 없을 때와 화면이 잠길 때를 알아차려 사이트를 다시 잠급니다. |
 | `tabs` | 탭 주소를 읽어 잠긴 사이트를 보여 주고 있거나 전에 보여 준 탭을 찾고, 다시 잠길 때나 잠긴 페이지가 그래도 로드됐을 때 그 탭을 잠금 화면으로 바꾸고, 잠금을 풀면 잠금 화면 탭을 원래 사이트로 돌려보내고, 잠긴 동안 `chrome://extensions` 대신 잠금 화면을 띄웁니다(사용자가 끌 수 있는 보호 기능). |
 | `webNavigation` | 페이지의 프레임을 볼 수 있어, 다른 페이지에 끼워 넣은 잠긴 사이트를 찾습니다. 다시 잠길 때 그 사이트를 끼워 넣은 페이지를 새로 고치고, 잠겨 있는 동안에도 로드되는 잠긴 사이트의 프레임을 처리합니다. 크롬이 `tabs`와 같은 "Read your browsing history" 안내를 띄웁니다. |
@@ -129,7 +129,7 @@ For My Privacy는 내가 고른 웹사이트에 비밀번호를 겁니다. 막�
 ### 데이터 사용
 
 - 수집하는 데이터: 없습니다. 목록의 어떤 종류의 데이터도 수집하거나 보내지 않으며, 네트워크 요청을 하지 않습니다.
-- 이 기기에만 저장하는 것: 비밀번호 해시, 사이트 목록, 설정, 틀린 횟수, 탭이 보여 준 잠긴 사이트 하위 주소의 출처(위 `storage` 항목 참고)
+- 이 기기에만 저장하는 것: 비밀번호 해시, 사이트 목록, 설정, 틀린 횟수, 탭이 보여 준 잠긴 사이트 하위 주소의 출처, 확장 프로그램이 연 잠금 화面이 잠금을 푼 뒤 열 페이지의 주소(위 `storage` 항목 참고)
 - 확인 사항: 데이터를 제3자에게 팔거나 넘기지 않고, 단일 목적과 관계없는 일에 쓰지 않으며, 신용도 판단이나 대출 목적으로 쓰지 않습니다.
 
 ## 日本語
@@ -161,7 +161,7 @@ Chrome がこれらの通知を表示する理由
 Chrome は declarativeNetRequest 権限を「あらゆるページのコンテンツをブロック」と表示します。For My Privacy がこの権限を使うのは、あなたが追加したサイトだけです。あとでツールバーのメニューからサイトへのアクセス権が外されても、ロック対象サイトをブロックし続けるために、この権限が必要です。そのときサイトには、中身の代わりに Chrome のブロック画面が表示されます。Chrome は tabs 権限と webNavigation 権限を「Read your browsing history」（閲覧履歴の読み取り）と表示します。これらの権限は、ロック対象サイトを表示しているタブやフレームを見つけて、そこにロック画面を表示するためだけに使います。アドレスをあなたの一覧と照らし合わせるだけで、どこにも送りません。
 
 プライバシー
-何も集めず、何も送りません。ネットワーク通信も、分析ツールも、アカウントもありません。パスワードのハッシュ、サイトの一覧、設定、そして保存済みのサービスワーカーとキャッシュを消すためのロック対象サイトのサブドメインのアドレス数件は、あなたのパソコンの Chrome の保存領域にだけ残ります。
+何も集めず、何も送りません。ネットワーク通信も、分析ツールも、アカウントもありません。パスワードのハッシュ、サイトの一覧、設定、そして保存済みのサービスワーカーとキャッシュを消すためのロック対象サイトのサブドメインのアドレス数件、ロック画面が解除後に開くページのアドレス（解除するか、そのタブを閉じるまで）は、あなたのパソコンの Chrome の保存領域にだけ残ります。
 
 防げないこと：パソコンそのものを自由に操作できる人です。たとえばパソコンの管理者、Chrome のデベロッパーツールを使う人、拡張機能をオフにして Chrome を起動する人、Chrome のプロファイルファイルを書き換える人です。場合によっては、ロック対象サイトの保存済みのページが一瞬見えることがあり、ページのタイトルは Chrome の履歴に残ります。ロック画面はウェブから参照できるページなので、どのウェブサイトでも、この拡張機能が入っていることは調べられます。詳しい限界は README にあります。
 
@@ -176,7 +176,7 @@ Chrome は declarativeNetRequest 権限を「あらゆるページのコンテ�
 | 権限 | 理由 |
 | --- | --- |
 | `declarativeNetRequest` | ユーザーがロックしたサイトのページへのリクエストを拡張機能のロック画面へ送り、ほかのページに埋め込まれたそのサイトとそれ以外のあらゆる種類のリクエストをブロックし、正しいパスワードのあとはブラウザを閉じるまで通す規則を置きます。規則に入るのは、ユーザーが追加したサイトだけです。 |
-| `storage` | 次の内容を、この端末の `chrome.storage.local` に保存します。パスワードのハッシュと、間違えた回数・待ち時間、ロック対象サイトの一覧と設定（1回の解除の範囲を含む）、タブやフレームが表示したロック対象サイトのサブドメインのオリジン（サービスワーカーを消すためにセッションをまたいで保存し、サイトが一覧から外れると削除）、終わるまでの初回セットアップの進み具合です。Chrome の起動中は、画面がロックされた時刻、ロック対象サイトを表示した、またはフレームで含んだタブの ID、設定と拡張機能ページが解除されているかどうか、ロック画面ごとの解除後に開くページのアドレスも `chrome.storage.session` に置きます。これは Chrome を閉じると消えます。端末の外に出るものはありません。 |
+| `storage` | 次の内容を、この端末の `chrome.storage.local` に保存します。パスワードのハッシュと、間違えた回数・待ち時間、ロック対象サイトの一覧と設定（1回の解除の範囲を含む）、タブやフレームが表示したロック対象サイトのサブドメインのオリジン（サービスワーカーを消すためにセッションをまたいで保存し、サイトが一覧から外れると削除）、再ロックのときに拡張機能が自分で開いたロック画面ごとの、解除後に開くページのアドレス（Chrome の再起動や更新のあとでもロック画面が続くように保存し、解除したとき、そのタブを閉じたとき、なくなったタブの分は次のロックのときに削除）、終わるまでの初回セットアップの進み具合です。Chrome の起動中は、画面がロックされた時刻、ロック対象サイトを表示した、またはフレームで含んだタブの ID、設定と拡張機能ページが解除されているかどうか、ロック画面ごとの解除後に開くページのアドレスも `chrome.storage.session` に置きます。これは Chrome を閉じると消えます。端末の外に出るものはありません。 |
 | `idle` | 決めた時間キーボードやマウスの操作がないとき、そして画面がロックされたときに気づき、サイトをもう一度ロックします。 |
 | `tabs` | タブのアドレスを読んで、ロック対象サイトを表示している、または以前表示したタブを見つけます。再ロックのとき、またはロック対象のページがそれでも読み込まれたときに、そのタブをロック画面に置き換え、ロック解除のあとはロック画面のタブを元のサイトに戻し、ロック中は `chrome://extensions` の代わりにロック画面を表示します（ユーザーがオフにできる保護機能）。 |
 | `webNavigation` | ページのフレームを見ることができ、ほかのページに埋め込まれたロック対象サイトを見つけます。再ロックのときにそのサイトを埋め込んだページを再読み込みし、ロック中にも読み込まれるロック対象サイトのフレームを処理します。Chrome は、`tabs` と同じ「Read your browsing history」の通知を表示します。 |
@@ -192,5 +192,5 @@ Chrome は declarativeNetRequest 権限を「あらゆるページのコンテ�
 ### データの使用
 
 - 収集するデータ：ありません。一覧にあるどの種類のデータも収集・送信せず、ネットワーク通信もしません。
-- この端末にだけ保存するもの：パスワードのハッシュ、サイトの一覧、設定、間違えた回数、タブが表示したロック対象サイトのサブドメインのオリジン（上の `storage` の項目を参照）
+- この端末にだけ保存するもの：パスワードのハッシュ、サイトの一覧、設定、間違えた回数、タブが表示したロック対象サイトのサブドメインのオリジン、拡張機能が開いたロック画面が解除後に開くページのアドレス（上の `storage` の項目を参照）
 - 確認事項：データを第三者に販売・譲渡せず、単一用途と関係のないことに使わず、信用力の判断や融資の目的にも使いません。
