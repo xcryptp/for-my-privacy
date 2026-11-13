@@ -76,6 +76,7 @@ function init(): void {
   const current = byId<HTMLInputElement>('current');
   const next = byId<HTMLInputElement>('next');
   const changeSubmit = byId<HTMLButtonElement>('change-submit');
+  const confirm = byId<HTMLInputElement>('change-confirm');
   const changeError = byId('change-error');
   const changeWait = createCountdown(changeError, changeSubmit, current);
 
@@ -83,6 +84,11 @@ function init(): void {
   let settings: Settings | undefined;
   let missingOrigins: string[] = [];
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
+  // Bumped whenever the screen is decided afresh (and when settings are cleared). Async work that
+  // started under an older value must not write to the page after its awaits: a relock in between
+  // would otherwise bring site names back into the hidden settings, or open the settings after a
+  // newer state check already said locked.
+  let epoch = 0;
 
   applyI18n();
   document.documentElement.lang = browser.i18n.getUILanguage();
@@ -91,8 +97,14 @@ function init(): void {
 
   function showToast(message: string): void {
     clearTimeout(toastTimer);
-    toast.textContent = message;
-    toastTimer = setTimeout(() => (toast.textContent = ''), TOAST_MS);
+    // Empty first, then fill on the next frame: a repeated "Saved." is announced again.
+    toast.textContent = '';
+    const show = () => {
+      toast.textContent = message;
+      toastTimer = setTimeout(() => (toast.textContent = ''), TOAST_MS);
+    };
+    if (document.hidden) show();
+    else requestAnimationFrame(show);
   }
 
   /** Shows a worker rejection on a password form: a countdown while a wait runs, else the message. */
@@ -126,7 +138,7 @@ function init(): void {
     domainList.replaceChildren();
     related.replaceChildren();
     banner.hidden = true;
-    for (const input of [current, next, domainInput]) input.value = '';
+    for (const input of [current, next, confirm, domainInput]) input.value = '';
     changeWait.stop();
     changeSubmit.disabled = false;
     for (const el of [changeError, domainError]) el.textContent = '';
@@ -134,11 +146,12 @@ function init(): void {
 
   async function applyState(state: State): Promise<void> {
     const wanted = viewFor(state);
-    if (wanted === view) return;
+    if (wanted === 'settings' && view === 'settings') return;
+    const myEpoch = ++epoch;
+    if (wanted === view) return; // locked or setup again: only cancels work still in flight
     const previous = view;
     if (wanted === 'settings') {
-      await renderSettings();
-      if (view === 'settings') return; // another call got there first
+      if (!(await renderSettings(myEpoch))) return; // a newer state replaced this one
     } else {
       clearSettingsView();
     }
@@ -170,13 +183,16 @@ function init(): void {
 
   // ---- settings view ----
 
-  async function renderSettings(): Promise<void> {
-    settings = await getSettings();
+  /** Draws the settings; false when a newer state made this render stale (nothing was written then). */
+  async function renderSettings(forEpoch: number): Promise<boolean> {
+    const loaded = await getSettings();
+    if (forEpoch !== epoch) return false;
+    settings = loaded;
     renderDomains();
-    idle.value = String(settings.idleMinutes);
-    screenLock.checked = settings.lockOnScreenLock;
-    guard.checked = settings.settingsGuard;
-    await renderBanner();
+    idle.value = String(loaded.idleMinutes);
+    screenLock.checked = loaded.lockOnScreenLock;
+    guard.checked = loaded.settingsGuard;
+    return renderBanner(forEpoch);
   }
 
   function renderDomains(): void {
@@ -217,7 +233,7 @@ function init(): void {
   }
 
   /** Shows the "site access was removed" notice while a listed site has no host access. */
-  async function renderBanner(): Promise<void> {
+  async function renderBanner(forEpoch: number): Promise<boolean> {
     const missing: string[] = [];
     for (const domain of settings?.domains ?? []) {
       const origins = originPatterns(domain);
@@ -230,10 +246,12 @@ function init(): void {
       }
       if (!has) missing.push(...origins);
     }
+    if (forEpoch !== epoch) return false;
     missingOrigins = missing;
     const wasHidden = banner.hidden;
     banner.hidden = missing.length === 0;
     if (wasHidden && !banner.hidden && location.hash === '#permission-lost') banner.scrollIntoView();
+    return true;
   }
 
   function addDomain(raw: string): void {
@@ -253,46 +271,62 @@ function init(): void {
   }
 
   async function finishAdd(domain: string, request: Promise<boolean>): Promise<void> {
+    const startEpoch = epoch;
     try {
-      if (!(await request)) {
+      const granted = await request;
+      if (startEpoch !== epoch) return; // locked meanwhile: touch nothing
+      if (!granted) {
         domainError.textContent = t('permissionDenied');
         return;
       }
       const stored = await getSettings();
-      settings = await saveSettings({ domains: [...stored.domains, domain] });
+      if (startEpoch !== epoch) return;
+      const saved = await saveSettings({ domains: [...stored.domains, domain] });
+      if (startEpoch !== epoch) return;
+      settings = saved;
+      domainError.textContent = '';
       domainInput.value = '';
       renderDomains();
-      await renderBanner();
       showToast(t('saved'));
+      await renderBanner(startEpoch);
     } catch (err) {
+      if (startEpoch !== epoch) return;
       console.warn('add site failed', err);
       domainError.textContent = t('permissionDenied');
     }
   }
 
   async function removeDomain(domain: string): Promise<void> {
+    const startEpoch = epoch;
     try {
       const stored = await getSettings();
-      const remaining = stored.domains.filter((d) => d !== domain);
-      settings = await saveSettings({ domains: remaining });
-      renderDomains();
-      showToast(t('saved'));
+      if (startEpoch !== epoch) return;
+      const saved = await saveSettings({ domains: stored.domains.filter((d) => d !== domain) });
+      // The list is saved even if the page locked meanwhile; only the screen is left alone then.
+      const origins = releasableOrigins(domain, saved.domains);
+      if (startEpoch === epoch) {
+        settings = saved;
+        renderDomains();
+        showToast(t('saved'));
+      }
       // Give the host access back too (best effort). The worker only reports lost access for a
       // site that is still listed, so this does not raise the notice.
-      const origins = releasableOrigins(domain, settings.domains);
       if (origins.length > 0) await browser.permissions.remove({ origins }).catch(() => false);
-      await renderBanner();
+      if (startEpoch === epoch) await renderBanner(startEpoch);
     } catch (err) {
       console.warn('remove site failed', err);
     }
   }
 
   async function saveField(patch: Partial<Settings>): Promise<void> {
+    const startEpoch = epoch;
     try {
-      settings = await saveSettings(patch);
-      idle.value = String(settings.idleMinutes);
-      screenLock.checked = settings.lockOnScreenLock;
-      guard.checked = settings.settingsGuard;
+      const saved = await saveSettings(patch);
+      if (startEpoch !== epoch) return;
+      settings = saved;
+      idle.value = String(saved.idleMinutes);
+      screenLock.checked = saved.lockOnScreenLock;
+      guard.checked = saved.settingsGuard;
       showToast(t('saved'));
     } catch (err) {
       console.warn('save failed', err);
@@ -367,9 +401,10 @@ function init(): void {
 
   grant.addEventListener('click', () => {
     // Started synchronously for the user gesture; the origins were worked out when the notice was drawn.
+    const startEpoch = epoch;
     const request = browser.permissions.request({ origins: missingOrigins });
     void request
-      .then(() => renderBanner())
+      .then(() => renderBanner(startEpoch))
       .catch((err) => console.warn('grant failed', err));
   });
 
@@ -395,6 +430,10 @@ function init(): void {
         changeError.textContent = t('passwordTooShort');
         return;
       }
+      if (next.value !== confirm.value) {
+        changeError.textContent = t('passwordMismatch');
+        return;
+      }
       changing = true;
       changeSubmit.disabled = true;
       changeWait.stop();
@@ -403,6 +442,7 @@ function init(): void {
         if (res.ok) {
           current.value = '';
           next.value = '';
+          confirm.value = '';
           showToast(t('saved'));
           return;
         }
@@ -433,7 +473,7 @@ function init(): void {
   // A change made on another options tab shows here too.
   browser.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !('settings' in changes) || view !== 'settings') return;
-    void renderSettings().catch((err) => console.warn('refresh failed', err));
+    void renderSettings(epoch).catch((err) => console.warn('refresh failed', err));
   });
 
   // Keep the screen true to the worker: it may relock on idle, screen lock or window close.

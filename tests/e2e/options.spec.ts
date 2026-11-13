@@ -34,7 +34,7 @@ async function optionsUi(page: Page, sw: Worker) {
     text,
     // The same label sits on the setup and the unlock form; only the visible one counts.
     password: page.getByLabel(password, { exact: true }).filter({ visible: true }),
-    confirm: page.getByLabel(confirm, { exact: true }),
+    confirm: page.getByLabel(confirm, { exact: true }).filter({ visible: true }),
     create: page.getByRole('button', { name: create }),
     unlock: page.getByRole('button', { name: unlock }),
     add: page.getByRole('button', { name: add, exact: true }),
@@ -43,6 +43,7 @@ async function optionsUi(page: Page, sw: Worker) {
     idle: page.getByLabel(idle),
     current: page.getByLabel(current, { exact: true }),
     next: page.getByLabel(next, { exact: true }),
+    changeConfirm: page.locator('#change-confirm'),
     save: page.getByRole('button', { name: save, exact: true }),
     domainField: page.locator('#domain'),
     domainError: page.locator('#domain-error'),
@@ -51,6 +52,7 @@ async function optionsUi(page: Page, sw: Worker) {
     unlockError: page.locator('#unlock-error'),
     changeError: page.locator('#change-error'),
     toast: page.getByRole('status'),
+    toastBox: page.locator('#toast'),
     heading: (key: string) => text(key).then((name) => page.getByRole('heading', { name })),
   };
 }
@@ -185,14 +187,17 @@ test('changing the password works: the new one unlocks, the old one does not', a
   // A wrong current password is reported and nothing changes.
   await ui.current.fill('not the password');
   await ui.next.fill('another secret');
+  await ui.changeConfirm.fill('another secret');
   await ui.save.click();
   await expect(ui.changeError).toHaveText(await ui.text('wrongPassword'));
 
   await ui.current.fill(PW);
   await ui.next.fill('another secret');
+  await ui.changeConfirm.fill('another secret');
   await ui.save.click();
   await expect(ui.toast).toHaveText(await ui.text('saved'));
   await expect(ui.current).toHaveValue('');
+  await expect(ui.changeConfirm).toHaveValue('');
 
   await ui.lockNow.click();
   await expect(ui.unlock).toBeVisible();
@@ -202,6 +207,62 @@ test('changing the password works: the new one unlocks, the old one does not', a
   await ui.password.fill('another secret');
   await ui.unlock.click();
   await expect(await ui.heading('domainsTitle')).toBeVisible();
+});
+
+test('a mismatched confirmation is refused and the old password still unlocks', async ({
+  context,
+  sw,
+  extensionId,
+}) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  await createPassword(ui);
+  await ui.current.fill(PW);
+  await ui.next.fill('another secret');
+  await ui.changeConfirm.fill('another sekret');
+  await ui.save.click();
+  await expect(ui.changeError).toHaveText(await ui.text('passwordMismatch'));
+  await expect(ui.toastBox).toHaveText('');
+
+  await ui.lockNow.click();
+  await expect(ui.unlock).toBeVisible();
+  await ui.password.fill(PW);
+  await ui.password.press('Enter');
+  await expect(await ui.heading('domainsTitle')).toBeVisible();
+});
+
+test('a slow settings render that finishes after Lock now writes nothing into the hidden settings', async ({
+  context,
+  sw,
+  extensionId,
+}) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  await createPassword(ui);
+  await ui.domainField.fill('example.test');
+  await ui.add.click();
+  await expect(ui.list.locator('li')).toHaveCount(1);
+
+  // Make the next read of the settings slow, so its render is still pending when the page locks.
+  await page.evaluate(() => {
+    const local = (globalThis as unknown as { chrome: typeof import('wxt/browser').browser }).chrome.storage.local;
+    const original = local.get.bind(local) as (keys: unknown) => Promise<unknown>;
+    local.get = (async (keys: unknown) => {
+      const result = await original(keys);
+      if (keys === 'settings') await new Promise((resolve) => setTimeout(resolve, 1500));
+      return result;
+    }) as typeof local.get;
+  });
+  // Another options tab changing the settings starts a refresh here.
+  await sw.evaluate(() =>
+    (globalThis as unknown as { __fmp: Api }).__fmp.saveSettings({ domains: ['example.test', 'other.test'] }),
+  );
+  await ui.lockNow.click();
+  await expect(ui.unlock).toBeVisible();
+  await page.waitForTimeout(2500);
+  await expect(ui.list.locator('li')).toHaveCount(0);
+  await expect(ui.unlock).toBeVisible();
+  await expect(ui.lockNow).toBeHidden();
 });
 
 test('Lock now locks again and the locked page shows no site names', async ({ context, sw, extensionId }) => {
