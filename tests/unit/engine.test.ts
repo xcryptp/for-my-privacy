@@ -6,7 +6,11 @@ import {
   applySettings,
   handleMessage,
   onIdleStateChanged,
+  onInstalled,
   onPermissionsRemoved,
+  onTabRemoved,
+  onTabReplaced,
+  onTabUpdated,
   relock,
   tabsToRelock,
 } from '../../src/background/engine';
@@ -41,12 +45,18 @@ function installChrome() {
   };
   (browser as unknown as { declarativeNetRequest: unknown }).declarativeNetRequest = dnr;
 
-  const listeners = { idle: [] as Listener[], permAdded: [] as Listener[], permRemoved: [] as Listener[] };
+  const listeners = {
+    idle: [] as Listener[],
+    permAdded: [] as Listener[],
+    permRemoved: [] as Listener[],
+    tabReplaced: [] as Listener[],
+  };
   const capture = (list: Listener[]) => ((cb: Listener) => void list.push(cb)) as never;
   vi.spyOn(browser.permissions, 'contains').mockImplementation((async () => true) as never);
   vi.spyOn(browser.permissions.onAdded, 'addListener').mockImplementation(capture(listeners.permAdded));
   vi.spyOn(browser.permissions.onRemoved, 'addListener').mockImplementation(capture(listeners.permRemoved));
   vi.spyOn(browser.idle.onStateChanged, 'addListener').mockImplementation(capture(listeners.idle));
+  vi.spyOn(browser.tabs.onReplaced, 'addListener').mockImplementation(capture(listeners.tabReplaced));
   const setDetectionInterval = vi
     .spyOn(browser.idle, 'setDetectionInterval')
     .mockImplementation((() => undefined) as never);
@@ -198,6 +208,46 @@ describe('handleMessage: unlock', () => {
     await handleMessage({ type: 'unlock', password: PW, returnTo: 'http://example.test/' }, {});
     await handleMessage({ type: 'unlock', password: WRONG, returnTo: 'http://example.test/' }, { tab: { id: 7 }, frameId: 0 });
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it('one unlock sends every lock tab with a safe target back, the sender first', async () => {
+    const update = vi.spyOn(browser.tabs, 'update').mockImplementation((async () => ({})) as never);
+    vi.spyOn(browser.tabs, 'query').mockImplementation((async () => [
+      { id: 3, url: `${LOCK}#u=http://m.example.test/b?x=1#h` },
+      { id: 7, url: `${LOCK}#u=http://www.example.test/x` },
+      { id: 8, url: `${LOCK}#u=https://evil.test/` },
+      { id: 9, url: `${LOCK}#u=javascript:alert(1)` },
+      { id: 10, url: 'http://other.test/' },
+      { id: 11, url: `${LOCK}#u=chrome://extensions/` },
+      { id: 12, url: `${LOCK}` },
+    ]) as never);
+    await seedPassword();
+    await saveSettings({ domains: ['example.test'] });
+    await handleMessage({ type: 'unlock', password: PW, returnTo: 'http://www.example.test/x' }, { tab: { id: 7 }, frameId: 0 });
+    expect(update.mock.calls).toEqual([
+      [7, { url: 'http://www.example.test/x' }],
+      [3, { url: 'http://m.example.test/b?x=1#h' }],
+      [11, { url: 'chrome://extensions/' }],
+    ]);
+
+    // A wrong password moves no tab; an unlock from a page with no tab still returns the lock tabs.
+    update.mockClear();
+    await handleMessage({ type: 'unlock', password: WRONG }, {});
+    expect(update).not.toHaveBeenCalled();
+    await handleMessage({ type: 'unlock', password: PW }, {});
+    expect(update.mock.calls.map((c) => c[0])).toEqual([3, 7, 11]);
+  });
+
+  it('still unlocks and returns the sender when listing the other tabs fails', async () => {
+    const update = vi.spyOn(browser.tabs, 'update').mockImplementation((async () => ({})) as never);
+    vi.spyOn(browser.tabs, 'query').mockImplementation((async () => {
+      throw new Error('tabs busy');
+    }) as never);
+    await seedPassword();
+    await saveSettings({ domains: ['example.test'] });
+    const res = await handleMessage({ type: 'unlock', password: PW, returnTo: 'http://example.test/' }, { tab: { id: 7 }, frameId: 0 });
+    expect(res).toMatchObject({ ok: true, state: { unlocked: true } });
+    expect(update.mock.calls).toEqual([[7, { url: 'http://example.test/' }]]);
   });
 });
 
@@ -418,6 +468,22 @@ describe('relock', () => {
     });
     await expect(relock('idle')).rejects.toThrow('dnr down');
     expect(remove.mock.calls.map((c) => c[0])).toEqual([1, 3, 4]);
+  });
+
+  it('retries closing a tab that cannot be edited right now, then sends it to the lock page', async () => {
+    await seedUnlocked(['example.test']);
+    const { create, remove } = stubTabs([TABS[0]!, TABS[2]!]);
+    const update = vi.spyOn(browser.tabs, 'update').mockImplementation((async () => ({})) as never);
+    const busy = (async () => {
+      throw new Error('Tabs cannot be edited right now (user may be dragging a tab).');
+    }) as never;
+    // Tab 1 closes on the second try; tab 3 never does and is sent to the lock page instead.
+    remove.mockImplementationOnce(busy).mockImplementationOnce((async () => {}) as never);
+    remove.mockImplementationOnce(busy).mockImplementationOnce(busy);
+    await relock('idle');
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(remove.mock.calls.map((c) => c[0])).toEqual([1, 1, 3, 3]);
+    expect(update.mock.calls).toEqual([[3, { url: `${LOCK}#u=http://example.test/` }]]);
   });
 
   it('touches no tabs before a password exists', async () => {
@@ -698,5 +764,149 @@ describe('background listeners', () => {
     });
     expect(await browser.runtime.sendMessage({ type: 'nope' })).toBeUndefined();
     expect(await browser.runtime.sendMessage({ type: 'unlock', password: 42 })).toBeUndefined();
+  });
+});
+
+// The worker keeps a copy of the shown-locked set in memory, which fakeBrowser.reset() cannot
+// reach; a relock with a password (and no tabs) empties it, then storage is wiped again.
+async function forgetTrackedTabs() {
+  await seedPassword();
+  await relock('manual');
+  await browser.storage.local.clear();
+  await browser.storage.session.clear();
+}
+
+describe('tabs that showed a locked site (back/forward cache)', () => {
+  const KEY = 'shownLockedTabs';
+  beforeEach(forgetTrackedTabs);
+  const stored = async () => (await browser.storage.session.get(KEY))[KEY] as number[] | undefined;
+  type FakeTab = { id: number; windowId: number; index: number; pinned: boolean; active: boolean; url: string };
+
+  function stubTabs(tabs: FakeTab[]) {
+    vi.spyOn(browser.tabs, 'query').mockImplementation((async () => tabs) as never);
+    const create = vi.spyOn(browser.tabs, 'create').mockImplementation((async () => ({ id: 99 })) as never);
+    const remove = vi.spyOn(browser.tabs, 'remove').mockImplementation((async () => {}) as never);
+    return { create, remove };
+  }
+
+  it('records a tab that showed a page of a locked domain, and only those', async () => {
+    await seedUnlocked(['example.test']);
+    await onTabUpdated(5, { url: 'https://www.example.test/a' });
+    await onTabUpdated(6, { url: 'https://notexample.test/' });
+    await onTabUpdated(7, { url: 'view-source:http://example.test/' });
+    await onTabUpdated(8, {});
+    await onTabUpdated(5, { url: 'https://example.test/b' });
+    expect(await stored()).toEqual([5, 7]);
+  });
+
+  it('follows a replaced tab and forgets a closed one', async () => {
+    await seedUnlocked(['example.test']);
+    await onTabUpdated(5, { url: 'https://example.test/' });
+    await onTabUpdated(6, { url: 'https://example.test/' });
+    await onTabReplaced(50, 5);
+    await onTabReplaced(70, 4);
+    expect(await stored()).toEqual([6, 50]);
+    await onTabRemoved(6);
+    await onTabRemoved(123);
+    expect(await stored()).toEqual([50]);
+  });
+
+  it('relock recreates a tracked tab that moved on, in place, and clears the set', async () => {
+    await seedUnlocked(['example.test']);
+    const tabs: FakeTab[] = [
+      { id: 1, windowId: 1, index: 0, pinned: true, active: false, url: 'https://other.test/now' },
+      { id: 2, windowId: 1, index: 1, pinned: false, active: true, url: 'https://other.test/untouched' },
+      { id: 3, windowId: 2, index: 0, pinned: false, active: true, url: 'https://www.example.test/still' },
+    ];
+    // Tab 1 showed example.test and then moved on; tab 3 is still on it; tab 9 no longer exists.
+    for (const id of [1, 3, 9]) await onTabUpdated(id, { url: 'https://example.test/' });
+    const { create, remove } = stubTabs(tabs);
+    await relock('idle');
+    expect(create.mock.calls.map((c) => c[0])).toEqual([
+      { windowId: 1, index: 0, pinned: true, active: false, url: 'https://other.test/now' },
+      { windowId: 2, index: 0, pinned: false, active: true, url: `${LOCK}#u=https://www.example.test/still` },
+    ]);
+    expect(remove.mock.calls.map((c) => c[0])).toEqual([1, 3]);
+    expect(create.mock.invocationCallOrder[0]!).toBeLessThan(remove.mock.invocationCallOrder[0]!);
+    expect(await stored()).toBeUndefined();
+
+    // Cleared: the next relock leaves the recreated tab alone.
+    create.mockClear();
+    remove.mockClear();
+    await seedUnlocked(['example.test']);
+    stubTabs([tabs[0]!, tabs[1]!]);
+    await relock('idle');
+    expect(vi.mocked(browser.tabs.create)).not.toHaveBeenCalled();
+    expect(vi.mocked(browser.tabs.remove)).not.toHaveBeenCalled();
+  });
+
+  it('still recreates the tabs this worker saw when the stored set cannot be read', async () => {
+    await seedUnlocked(['example.test']);
+    await onTabUpdated(1, { url: 'https://example.test/' });
+    const { remove } = stubTabs([
+      { id: 1, windowId: 1, index: 0, pinned: false, active: true, url: 'https://other.test/' },
+    ]);
+    vi.spyOn(browser.storage.session, 'get').mockImplementation((async () => {
+      throw new Error('session storage down');
+    }) as never);
+    await relock('idle');
+    expect(remove.mock.calls.map((c) => c[0])).toEqual([1]);
+  });
+
+  it('a failed read does not let the next write drop the stored tabs', async () => {
+    await seedUnlocked(['example.test']);
+    // Another worker life stored tab 4; this worker has not seen it.
+    await browser.storage.session.set({ [KEY]: [4] });
+    vi.spyOn(browser.storage.session, 'get').mockImplementationOnce((async () => {
+      throw new Error('session storage down');
+    }) as never);
+    await onTabUpdated(5, { url: 'https://example.test/' });
+    expect(await stored()).toEqual([4]);
+    const { remove } = stubTabs([
+      { id: 4, windowId: 1, index: 0, pinned: false, active: false, url: 'https://other.test/a' },
+      { id: 5, windowId: 1, index: 1, pinned: false, active: true, url: 'https://other.test/b' },
+    ]);
+    await relock('idle');
+    expect(remove.mock.calls.map((c) => c[0])).toEqual([4, 5]);
+  });
+
+  it('keeps the set when no sweep ran (no password yet), so a later relock still covers the tab', async () => {
+    await saveSettings({ domains: ['example.test'] });
+    await onTabUpdated(1, { url: 'https://example.test/' });
+    const { remove } = stubTabs([
+      { id: 1, windowId: 1, index: 0, pinned: false, active: true, url: 'https://other.test/' },
+    ]);
+    await relock('idle');
+    expect(remove).not.toHaveBeenCalled();
+    expect(await stored()).toEqual([1]);
+  });
+});
+
+describe('extension update', () => {
+  beforeEach(forgetTrackedTabs);
+  it('sweeps open tabs of locked domains on update, not on install', async () => {
+    await seedUnlocked(['example.test']);
+    vi.spyOn(browser.tabs, 'query').mockImplementation((async () => [
+      { id: 1, windowId: 1, index: 0, pinned: false, active: true, url: 'https://example.test/' },
+      { id: 2, windowId: 1, index: 1, pinned: false, active: false, url: 'https://other.test/' },
+    ]) as never);
+    vi.spyOn(browser.tabs, 'create').mockImplementation((async () => ({ id: 99 })) as never);
+    const remove = vi.spyOn(browser.tabs, 'remove').mockImplementation((async () => {}) as never);
+    await onInstalled({ reason: 'install' });
+    await onInstalled({ reason: 'chrome_update' });
+    expect(remove).not.toHaveBeenCalled();
+    await onInstalled({ reason: 'update' });
+    expect(remove.mock.calls.map((c) => c[0])).toEqual([1]);
+    expect(chrome.state.session).toEqual([]);
+  });
+
+  it('touches no tabs on update before a password exists', async () => {
+    await saveSettings({ domains: ['example.test'] });
+    vi.spyOn(browser.tabs, 'query').mockImplementation((async () => [
+      { id: 1, windowId: 1, index: 0, pinned: false, active: true, url: 'https://example.test/' },
+    ]) as never);
+    const remove = vi.spyOn(browser.tabs, 'remove').mockImplementation((async () => {}) as never);
+    await onInstalled({ reason: 'update' });
+    expect(remove).not.toHaveBeenCalled();
   });
 });

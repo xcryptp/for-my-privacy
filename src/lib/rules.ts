@@ -85,3 +85,10 @@ export async function isUnlocked(): Promise<boolean> {
 export function lockPageUrl(originalUrl: string): string {
   return lockPageBase() + '#u=' + originalUrl;
 }
+
+/** The original URL inside a lock page URL (everything after the first `#u=`), else undefined. */
+export function lockPageTarget(url: string | undefined): string | undefined {
+  const prefix = lockPageBase() + '#u=';
+  if (!url?.startsWith(prefix)) return undefined;
+  return url.slice(prefix.length) || undefined;
+}

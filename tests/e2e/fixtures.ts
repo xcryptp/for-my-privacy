@@ -84,6 +84,9 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         const ctx = await chromium.launchPersistentContext(profileDir, {
           channel: 'chromium',
           headless: true,
+          // Playwright turns the back/forward cache off by default; real Chrome has it on, and a
+          // page restored from it needs no request, so the redirect rule never sees it.
+          ignoreDefaultArgs: ['--disable-back-forward-cache'],
           args: [
             `--disable-extensions-except=${EXTENSION_DIR}`,
             `--load-extension=${EXTENSION_DIR}`,

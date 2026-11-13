@@ -125,3 +125,37 @@ test('extensions page opens normally while unlocked', async ({ context, sw }) =>
   await page.waitForTimeout(500);
   expect(page.url()).toBe('chrome://extensions/');
 });
+
+test('a tab that showed a locked site and moved on is recreated, so Back cannot restore it', async ({
+  context,
+  sw,
+  origin,
+}) => {
+  await setUp(sw, ['example.test']);
+  const page = await context.newPage();
+  await page.goto(origin('example.test') + '/');
+  await expect(page).toHaveTitle('ORIGINAL example.test');
+  // Same tab, a site that is not locked; the locked page stays in this tab's history.
+  await page.goto(origin('other.test') + '/');
+  await expect(page).toHaveTitle('ORIGINAL other.test');
+
+  const res = await call(sw, { type: 'lockNow' });
+  expect(res).toMatchObject({ ok: true, state: { unlocked: false } });
+
+  // Back in every remaining tab must not bring the locked page back (bfcache needs no request,
+  // so the redirect rule never sees it).
+  for (const p of context.pages()) {
+    await p.goBack({ waitUntil: 'commit' }).catch(() => {});
+    await p.waitForTimeout(500);
+    if (p.isClosed()) continue;
+    expect(p.url().startsWith(origin('example.test')), p.url()).toBe(false);
+    expect(await p.title().catch(() => '')).not.toBe('ORIGINAL example.test');
+  }
+
+  // The tab was replaced by a new one on the same URL, with no history behind it.
+  expect(page.isClosed()).toBe(true);
+  const fresh = context.pages().find((p) => p.url() === origin('other.test') + '/');
+  expect(fresh).toBeDefined();
+  await expect(fresh!).toHaveTitle('ORIGINAL other.test');
+  expect(await fresh!.evaluate(() => history.length)).toBe(1);
+});

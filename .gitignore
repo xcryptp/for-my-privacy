@@ -6,3 +6,5 @@ test-results/
 playwright-report/
 .DS_Store
 *.log
+# Release notes extracted by the release workflow
+notes.md

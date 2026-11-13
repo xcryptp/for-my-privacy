@@ -13,14 +13,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - name: Check tag matches package.json version
         run: node scripts/check-version.mjs
+      # The zips are built only from code that passes the checks (the browser tests run in CI).
+      - run: npm run typecheck
+      - run: npm test
+      - name: Release script tests
+        run: node --test scripts/*.test.mjs
       - name: Build zips
         run: |
           npm run zip

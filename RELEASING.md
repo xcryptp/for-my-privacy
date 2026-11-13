@@ -21,7 +21,7 @@ Every release bumps the SemVer version. `package.json` is the only version sourc
    git push origin HEAD --follow-tags
    ```
 
-5. The `Release` workflow runs on the `v*` tag. It checks that the tag equals `v` + the `package.json` version (`scripts/check-version.mjs`), builds `npm run zip` and `npm run zip:noguard`, extracts the changelog section (`scripts/changelog-section.mjs`) and creates the GitHub Release with both zips:
+5. The `Release` workflow runs on the `v*` tag. It checks that the tag equals `v` + the `package.json` version (`scripts/check-version.mjs`), runs the type check, the unit tests and the release script tests, builds `npm run zip` and `npm run zip:noguard`, extracts the changelog section (`scripts/changelog-section.mjs`) and creates the GitHub Release with both zips:
    - `for-my-privacy-X.Y.Z-chrome.zip` (store build)
    - `for-my-privacy-X.Y.Z-chrome-noguard.zip` (`noguard` build)
 
@@ -30,7 +30,7 @@ Every release bumps the SemVer version. `package.json` is the only version sourc
 The first upload of the extension is done by hand in the [Chrome Web Store developer dashboard](https://chrome.google.com/webstore/devconsole); that also gives you the extension ID. Later updates can use the `Submit to Chrome Web Store` workflow:
 
 1. GitHub: Actions, `Submit to Chrome Web Store`, `Run workflow`.
-2. Pick the release tag (`vX.Y.Z`) as the ref, so the uploaded zip is the one released.
+2. Pick the release tag (`vX.Y.Z`) as the ref, so the uploaded zip is the one released. The workflow stops on a branch, and on a tag that does not match the `package.json` version.
 3. Leave `dry_run` on for a first run: it only checks authentication. Run again with `dry_run` off to upload and submit for review.
 
 The workflow runs `npx wxt submit --chrome-zip .output/for-my-privacy-X.Y.Z-chrome.zip` with the Chrome Web Store API v2. Only the store build is submitted, never the `noguard` build.

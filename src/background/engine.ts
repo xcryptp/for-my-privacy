@@ -11,6 +11,7 @@ import {
   clearUnlocked,
   domainsWithHostAccess,
   isUnlocked,
+  lockPageTarget,
   lockPageUrl,
   setUnlocked,
   syncBlockRules,
@@ -22,10 +23,19 @@ export { isExtensionsPage, safeReturnTo };
 const MIN_IDLE_SECONDS = 15;
 // storage.session key: when the screen locked without relocking (lockOnScreenLock off).
 const SCREEN_LOCKED_AT_KEY = 'screenLockedAt';
+// storage.session key: IDs of tabs that showed a page of a locked domain since the last relock.
+// Such a tab keeps that page in its history (and maybe the back/forward cache, which needs no
+// request), so a relock recreates it even when it has moved on to another site.
+const SHOWN_LOCKED_KEY = 'shownLockedTabs';
+// Wait before trying again to close a tab Chrome refuses to edit (e.g. while a tab is dragged).
+const CLOSE_RETRY_MS = 500;
 
 // Last settings read successfully. Only a fallback so a relock still sweeps tabs when storage
 // fails; it is never used to decide whether the browser is unlocked.
 let lastSettings: Settings | null = null;
+// This worker's copy of the shown-locked set, so a failed storage.session read during a relock
+// still covers the tabs this worker recorded.
+const shownLocked = new Set<number>();
 
 async function getSettings(): Promise<Settings> {
   const settings = await readSettings();
@@ -140,9 +150,70 @@ export function tabsToRelock<T extends { url?: string; pendingUrl?: string }>(ta
 
 type Tab = Browser.tabs.Tab;
 
-// A new tab, not tabs.update: an updated tab keeps the page in the back/forward cache, so Back
-// would show it again (spike B5). The original is closed even if the replacement fails.
-async function replaceWithLockPage(tab: Tab, returnTo: string): Promise<void> {
+/**
+ * The stored shown-locked set joined with this worker's copy. Never throws; `complete` is false
+ * when the stored set could not be read.
+ */
+async function readShownLocked(): Promise<{ ids: Set<number>; complete: boolean }> {
+  const ids = new Set(shownLocked);
+  try {
+    const stored: unknown = (await browser.storage.session.get(SHOWN_LOCKED_KEY))[SHOWN_LOCKED_KEY];
+    if (Array.isArray(stored)) for (const id of stored) if (typeof id === 'number') ids.add(id);
+    return { ids, complete: true };
+  } catch (err) {
+    console.warn('tabs: could not read the tabs that showed a locked site', err);
+    return { ids, complete: false };
+  }
+}
+
+/** Saves the set; after an incomplete read only this worker's copy changes, so stored IDs stay. */
+async function writeShownLocked({ ids, complete }: { ids: Set<number>; complete: boolean }): Promise<void> {
+  shownLocked.clear();
+  for (const id of ids) shownLocked.add(id);
+  if (complete) await browser.storage.session.set({ [SHOWN_LOCKED_KEY]: [...ids] });
+}
+
+async function clearShownLocked(): Promise<void> {
+  shownLocked.clear();
+  await browser.storage.session.remove(SHOWN_LOCKED_KEY).catch((err) => console.warn('relock: clear failed', err));
+}
+
+/** Records a tab that showed a page of a locked domain. Runs in ruleQueue, after any relock. */
+function trackShownLocked(tabId: number): Promise<void> {
+  return ruleQueue(async () => {
+    if (shownLocked.has(tabId)) return;
+    const set = await readShownLocked();
+    set.ids.add(tabId);
+    await writeShownLocked(set);
+  });
+}
+
+async function closeTab(tab: Tab & { id: number }, returnTo: string): Promise<void> {
+  try {
+    await browser.tabs.remove(tab.id);
+    return;
+  } catch (err) {
+    console.warn('relock: could not close a tab, trying again', err);
+  }
+  await new Promise((resolve) => setTimeout(resolve, CLOSE_RETRY_MS));
+  try {
+    await browser.tabs.remove(tab.id);
+    return;
+  } catch (err) {
+    console.warn('relock: could not close a tab, sending it to the lock page', err);
+  }
+  // Last resort: the page at least leaves the screen, though this tab keeps its history.
+  await browser.tabs
+    .update(tab.id, { url: lockPageUrl(returnTo) })
+    .catch((err) => console.warn('relock: could not send a tab to the lock page', err));
+}
+
+/**
+ * Opens `url` (the new tab page when undefined) in a new tab at `tab`'s place, then closes `tab`.
+ * A new tab, not tabs.update: an updated tab keeps the page in the back/forward cache, so Back
+ * would show it again (spike B5). The original is closed even if the replacement fails.
+ */
+async function recreateTab(tab: Tab, url: string | undefined, returnTo: string): Promise<void> {
   if (tab.id === undefined) return;
   try {
     await browser.tabs.create({
@@ -150,16 +221,16 @@ async function replaceWithLockPage(tab: Tab, returnTo: string): Promise<void> {
       index: tab.index,
       pinned: tab.pinned,
       active: tab.active,
-      url: lockPageUrl(returnTo),
+      ...(url === undefined ? {} : { url }),
     });
   } catch (err) {
-    console.warn('relock: could not open the lock page', err);
+    console.warn('relock: could not open the replacement tab', err);
   }
-  try {
-    await browser.tabs.remove(tab.id);
-  } catch (err) {
-    console.warn('relock: could not close a locked tab', err);
-  }
+  await closeTab(tab as Tab & { id: number }, returnTo);
+}
+
+function replaceWithLockPage(tab: Tab, returnTo: string): Promise<void> {
+  return recreateTab(tab, lockPageUrl(returnTo), returnTo);
 }
 
 function guardActive(settings: Settings): boolean {
@@ -190,7 +261,7 @@ async function passwordMaybeSet(): Promise<boolean> {
  * Fails closed: a storage or tabs error after the rule is cleared still sweeps the tabs (with the
  * last known settings), and the first error is rethrown only after the sweep.
  */
-export function relock(reason: 'idle' | 'screen' | 'windows' | 'manual'): Promise<void> {
+export function relock(reason: 'idle' | 'screen' | 'windows' | 'manual' | 'update'): Promise<void> {
   void reason;
   return ruleQueue(async () => {
     // The sweep uses a listing taken after the rule is cleared, so a tab that opened or started
@@ -206,13 +277,14 @@ export function relock(reason: 'idle' | 'screen' | 'windows' | 'manual'): Promis
     if (await passwordMaybeSet()) {
       const settings = await settingsOrFallback();
       const tabs = (await queryTabs()) ?? before ?? [];
-      await sweepTabs(tabs, settings);
+      await sweepTabs(tabs, settings, (await readShownLocked()).ids);
+      await clearShownLocked();
     }
     if (firstError) throw firstError;
   });
 }
 
-async function sweepTabs(tabs: Tab[], settings: Settings): Promise<void> {
+async function sweepTabs(tabs: Tab[], settings: Settings, shown: Set<number>): Promise<void> {
   const locked = new Set(tabsToRelock(tabs, settings.domains));
   // Replacing a tab keeps every index stable, so tabs are handled in their original order.
   for (const tab of tabs) {
@@ -223,7 +295,14 @@ async function sweepTabs(tabs: Tab[], settings: Settings): Promise<void> {
       // An extensions page left open while unlocked would stay usable after relocking.
       target = tab.url;
     }
-    if (target) await replaceWithLockPage(tab, target);
+    if (target) {
+      await replaceWithLockPage(tab, target);
+    } else if (tab.id !== undefined && shown.has(tab.id)) {
+      // It showed a locked site earlier and moved on: same page, but in a tab with no history.
+      // If it cannot be closed, closeTab's last resort sends it to the lock page.
+      const url = tab.pendingUrl || tab.url || undefined;
+      await recreateTab(tab, url, url ?? '');
+    }
   }
 }
 
@@ -251,6 +330,23 @@ export interface Sender {
 // its top frame; one without a tab (an extension page not in a tab) has nothing to navigate.
 function fromTopFrame(sender: Sender): boolean {
   return sender.tab === undefined || sender.frameId === 0;
+}
+
+/** After an unlock, sends every other lock tab with a safe target back to it. */
+async function returnLockTabs(domains: string[], senderTabId: number | undefined): Promise<void> {
+  let tabs: Tab[];
+  try {
+    tabs = await browser.tabs.query({});
+  } catch (err) {
+    console.warn('unlock: could not list the lock tabs', err);
+    return;
+  }
+  for (const tab of tabs) {
+    if (tab.id === undefined || tab.id === senderTabId) continue;
+    const url = safeReturnTo(lockPageTarget(tab.url), domains);
+    if (url === null) continue;
+    await browser.tabs.update(tab.id, { url }).catch((err) => console.warn('unlock: return failed', err));
+  }
 }
 
 export async function handleMessage(req: Request, sender: Sender): Promise<Response> {
@@ -282,10 +378,12 @@ export async function handleMessage(req: Request, sender: Sender): Promise<Respo
       });
       if (result !== 'ok') return fail(result);
       const tabId = sender.tab?.id;
-      const url = safeReturnTo(req.returnTo, (await getSettings()).domains);
+      const { domains } = await getSettings();
+      const url = safeReturnTo(req.returnTo, domains);
       if (tabId !== undefined && url !== null) {
         await browser.tabs.update(tabId, { url }).catch((err) => console.warn('unlock: return failed', err));
       }
+      await returnLockTabs(domains, tabId);
       return ok();
     }
 
@@ -310,6 +408,9 @@ export async function handleMessage(req: Request, sender: Sender): Promise<Respo
 
 export async function onInstalled(details: { reason: string }): Promise<void> {
   if (details.reason === 'install') await browser.runtime.openOptionsPage();
+  // An update or reload drops the session unlock rule, but open tabs of locked sites stay as they
+  // were until the next relock, so sweep them now (relock does nothing before a password exists).
+  if (details.reason === 'update') await relock('update');
 }
 
 export async function onIdleStateChanged(state: string): Promise<void> {
@@ -358,13 +459,45 @@ export async function onWindowRemoved(): Promise<void> {
   if (remaining.length === 0) await relock('windows');
 }
 
+/** True when `url` is a page of a locked domain; any http(s) page when the domains are unknown. */
+async function showsLockedSite(url: string): Promise<boolean> {
+  let domains: string[];
+  try {
+    domains = (await getSettings()).domains;
+  } catch (err) {
+    console.warn('tabs: settings read failed', err);
+    if (lastSettings) domains = lastSettings.domains;
+    else return /^(view-source:)?https?:/i.test(url);
+  }
+  return lockedTarget(url, domains) !== null;
+}
+
 export async function onTabUpdated(tabId: number, changeInfo: { url?: string }): Promise<void> {
   const url = changeInfo.url;
+  if (url && (await showsLockedSite(url))) await trackShownLocked(tabId);
   if (!SETTINGS_GUARD_BUILD || !url || !isExtensionsPage(url)) return;
   const settings = await getSettings();
   if (!settings.settingsGuard) return;
   if (!(await getAuth()).password || (await isUnlocked())) return;
   await browser.tabs.update(tabId, { url: lockPageUrl(url) });
+}
+
+/** A tab swapped for another (prerender, instant pages): the new ID inherits the old one's record. */
+export function onTabReplaced(addedTabId: number, removedTabId: number): Promise<void> {
+  return ruleQueue(async () => {
+    const set = await readShownLocked();
+    if (!set.ids.delete(removedTabId)) return;
+    set.ids.add(addedTabId);
+    await writeShownLocked(set);
+  });
+}
+
+export function onTabRemoved(tabId: number): Promise<void> {
+  return ruleQueue(async () => {
+    const set = await readShownLocked();
+    if (!set.ids.delete(tabId)) return;
+    await writeShownLocked(set);
+  });
 }
 
 export async function onPermissionsRemoved(): Promise<void> {

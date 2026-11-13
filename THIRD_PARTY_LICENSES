@@ -1,47 +1,23 @@
 THIRD-PARTY LICENSES — For My Privacy 0.1.0
 
-For My Privacy has no runtime dependencies ("dependencies" is empty in package.json; `npm ls --omit=dev` lists nothing). Its own code is MIT-licensed (see LICENSE). The extension is built with WXT and Vite, and a few very small pieces of those tools are copied into the built extension (.output/chrome-mv3). Those pieces, and nothing else, are listed here.
+For My Privacy has no runtime dependencies ("dependencies" is empty in package.json; `npm ls --omit=dev` lists nothing). Its own code is MIT-licensed (see LICENSE). The extension is built with WXT and Vite, and a few very small pieces of WXT are copied into the built extension (.output/chrome-mv3). Vite's modulepreload polyfill is turned off in wxt.config.ts, so no Vite code ends up in the extension. Those pieces, and nothing else, are listed here.
 
 How this list was made
 1. Read the built files in .output/chrome-mv3 (background.js and chunks/countdown-*.js, lock-*.js, options-*.js; the lock and options chunks import the shared countdown chunk) and matched every code fragment that is not from this repository to its source package.
 2. Checked each source package's name, version, license field and license text in node_modules.
-3. Checked that the build output has no other bundled library code: no import of a package name, no bundler module-wrapper helpers (__commonJS, __esm, __toESM, __defProp), and no node_modules paths.
+3. Checked that the build output has no other bundled library code: no import of a package name, no bundler module-wrapper helpers (__commonJS, __esm, __toESM, __defProp), no Vite helpers (modulepreload polyfill, __vitePreload), and no node_modules paths.
 To check again after a dependency change: build, then search the output for those markers and re-read the minified files. Tools used only to build, test or release (TypeScript, Vitest, Playwright, Node) put no code into the extension and are not listed.
 
 Bundled pieces
 
 1. @wxt-dev/browser 0.3.7 (MIT) — the one-line "browser" handle (globalThis.browser if it has a runtime id, else globalThis.chrome), present in background.js and in the shared chunks/countdown-*.js. Reached through "wxt/browser". Source: https://github.com/wxt-dev/wxt
 2. wxt 0.21.5 (MIT) — the defineBackground helper and the small background start-up wrapper with its no-op logger. Reached through "wxt/utils/define-background". Source: https://github.com/wxt-dev/wxt
-3. Vite 8.3.8 (MIT) — the "modulepreload polyfill" that Vite puts at the start of the shared chunk used by the lock and options pages (chunks/countdown-*.js). Source: https://github.com/vitejs/vite
 
 License text for items 1 and 2 (from the wxt repository's LICENSE file, the same file covers wxt and @wxt-dev/browser):
 
 MIT License
 
 Copyright (c) 2023 Aaron
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-License text for item 3 (from node_modules/vite/LICENSE.md, "Vite core license"):
-
-
-Copyright (c) 2019-present, VoidZero Inc. and Vite contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

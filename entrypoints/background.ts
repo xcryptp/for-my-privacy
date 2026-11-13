@@ -6,6 +6,8 @@ import {
   onIdleStateChanged,
   onInstalled,
   onPermissionsRemoved,
+  onTabRemoved,
+  onTabReplaced,
   onTabUpdated,
   onWindowRemoved,
   onWorkerStart,
@@ -36,6 +38,12 @@ export default defineBackground(() => {
   });
   browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
     onTabUpdated(tabId, changeInfo).catch(logErrors('tabs.onUpdated'));
+  });
+  browser.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
+    onTabReplaced(addedTabId, removedTabId).catch(logErrors('tabs.onReplaced'));
+  });
+  browser.tabs.onRemoved.addListener((tabId) => {
+    onTabRemoved(tabId).catch(logErrors('tabs.onRemoved'));
   });
   browser.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && 'settings' in changes) resync().catch(logErrors('storage.onChanged'));

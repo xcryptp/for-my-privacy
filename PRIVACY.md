@@ -17,6 +17,8 @@ The extension keeps this in `chrome.storage.local`, on your computer only:
 - Your settings: auto-lock minutes, lock on screen lock, extensions-page guard.
 - A count of recent wrong passwords and the time until the next try is allowed.
 
+While Chrome is running, it also keeps two short-lived values in `chrome.storage.session`, which Chrome holds in memory and clears when it closes: the time the screen locked (used when "lock when the screen locks" is off) and the IDs of the tabs that showed a locked site since the last lock.
+
 It does not use `chrome.storage.sync`, so nothing is copied to your Google account or to other devices. Removing the extension deletes all of it.
 
 ### Why each permission is needed
@@ -46,6 +48,8 @@ For My Privacy는 어떤 데이터도 수집하거나 보내거나 공유하지 
 - 설정: 자동 잠금 시간, 화면이 잠기면 잠금, 확장 관리 화면 보호
 - 최근에 비밀번호를 틀린 횟수와 다음 시도까지 기다려야 하는 시간
 
+크롬이 켜져 있는 동안에는 잠깐 쓰는 값 두 가지를 `chrome.storage.session`에도 둡니다. 크롬이 메모리에만 두고 크롬을 끄면 지우는 공간입니다. 화면이 잠긴 시각("화면이 잠기면 함께 잠그기"를 껐을 때 씀)과, 마지막으로 잠긴 뒤 잠긴 사이트를 보여 준 탭의 ID입니다.
+
 `chrome.storage.sync`는 쓰지 않으므로 Google 계정이나 다른 기기로 복사되지 않습니다. 확장 프로그램을 삭제하면 모두 지워집니다.
 
 ### 권한이 필요한 이유
@@ -74,6 +78,8 @@ For My Privacy は、データを収集・送信・共有しません。ネッ�
 - ロックするために選んだサイトの一覧
 - 設定：自動ロックの時間、画面ロック時にロック、拡張機能ページの保護
 - 最近パスワードを間違えた回数と、次に試せるまでの待ち時間
+
+Chrome の起動中は、一時的な値を2つ `chrome.storage.session` にも置きます。Chrome がメモリにだけ置き、Chrome を閉じると消す場所です。画面がロックされた時刻（「画面がロックされたら、サイトもロックする」をオフにしたときに使用）と、前回のロック以降にロック対象サイトを表示したタブの ID です。
 
 `chrome.storage.sync` は使わないので、Google アカウントや他の端末にはコピーされません。拡張機能を削除すると、すべて消えます。
 

@@ -112,6 +112,28 @@ test('the right password returns to the original URL (Enter submits)', async ({
   await expect(page).toHaveTitle('ORIGINAL www.example.test');
 });
 
+test('one unlock sends every lock tab back to its site', async ({ context, sw, extensionId, origin }) => {
+  await lockDomains(sw, ['example.test']);
+  const first = await context.newPage();
+  const second = await context.newPage();
+  const firstTarget = origin('www.example.test') + '/one';
+  const secondTarget = origin('m.example.test') + '/two?x=1';
+  for (const [page, target] of [
+    [first, firstTarget],
+    [second, secondTarget],
+  ] as const) {
+    await page.goto(target).catch(() => {});
+    await expect.poll(() => page.url()).toBe(`chrome-extension://${extensionId}/lock.html#u=${target}`);
+  }
+  const ui = await lockUi(second, sw);
+  await ui.field.fill(PW);
+  await ui.field.press('Enter');
+  await expect.poll(() => second.url()).toBe(secondTarget);
+  await expect.poll(() => first.url()).toBe(firstTarget);
+  await expect(first).toHaveTitle('ORIGINAL www.example.test');
+  await expect(second).toHaveTitle('ORIGINAL m.example.test');
+});
+
 test('the extensions page returns after unlocking', async ({ context, sw, extensionId }) => {
   await lockDomains(sw, ['example.test']);
   const page = await context.newPage();

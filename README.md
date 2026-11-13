@@ -47,7 +47,7 @@ flowchart LR
 - Locked sites are blocked with Chrome's own `declarativeNetRequest` rules. A redirect rule (the higher priority) sends the page request to the extension's lock page. A block rule for the same domains has a lower priority and is the backup: it keeps working even if site access is withdrawn from the toolbar menu, so the site shows a blocked page, never its content.
 - Unlocking adds one higher-priority allow rule that lives only for the browser session. It is the only "unlocked" state there is. Restarting Chrome clears it, so Chrome starts locked.
 - Idle detection uses Chrome's `idle` API and counts keyboard and mouse input on the whole computer, not only in Chrome.
-- Re-locking removes the allow rule and replaces each open tab of a locked site with a new lock-page tab in the same window and position. A new tab is used because changing the address of an old tab would let Back bring its page back from Chrome's cache.
+- Re-locking removes the allow rule and replaces each open tab of a locked site with a new lock-page tab in the same window and position. A new tab is used because changing the address of an old tab would let Back bring its page back from Chrome's cache. For the same reason, a tab that showed a locked site earlier and has since moved on to another site is reopened as a new tab at the same address, without its history. One unlock sends every open lock screen back to its site.
 - Sites framed inside other sites are blocked, not redirected.
 
 </details>
@@ -85,6 +85,7 @@ For My Privacy stops a person who has your unlocked Chrome from opening the site
 | --- | --- | --- |
 | Removing the extension from the toolbar menu | Chrome lets anyone remove an extension | [Chrome policies](#make-it-stronger-with-chrome-policies) |
 | Starting Chrome with extensions off, or editing profile files | It happens outside the extension | [Chrome policies](#make-it-stronger-with-chrome-policies) |
+| Chrome's **Reset settings** (`chrome://settings/reset`) | It turns off every extension, this one included | [Chrome policies](#make-it-stronger-with-chrome-policies) |
 | Chrome DevTools | The extension does not promise to stop someone who knows DevTools | [Chrome policies](#make-it-stronger-with-chrome-policies) |
 | Page titles in history, address-bar suggestions and tab search | Chrome keeps them | Nothing in 0.1.0 |
 | Site notifications, such as message previews | Not blocked in 0.1.0 | Nothing in 0.1.0 |
@@ -112,7 +113,7 @@ Ready-made files:
 - macOS: [`docs/hardening/macos/for-my-privacy-chrome.mobileconfig`](docs/hardening/macos/for-my-privacy-chrome.mobileconfig) (a configuration profile, payload type `com.google.Chrome`)
 - Windows: [`docs/hardening/windows/for-my-privacy-chrome.reg`](docs/hardening/windows/for-my-privacy-chrome.reg) (registry keys under `HKLM\SOFTWARE\Policies\Google\Chrome` and `...\ExtensionInstallForcelist`)
 
-The force-install policy needs the extension's Chrome Web Store ID, which exists once the store listing is live. Replace `<EXTENSION_ID>` in the file (brackets included) with the 32-letter ID. The store copy and an unpacked copy are two separate extensions with separate storage and passwords, so remove the unpacked copy before you force-install the store version. Until then, delete the force-install part. Read the warning below before you use the DevTools policy on its own.
+The force-install policy needs the extension's Chrome Web Store ID, which exists once the store listing is live. Replace `<EXTENSION_ID>` in the file (brackets included) with the 32-letter ID. Until then, delete the force-install part. The store copy and an unpacked copy are two separate extensions with separate storage and passwords, so remove the unpacked copy before you force-install the store version. Read the warning above before you use the DevTools policy on its own.
 
 **macOS**
 

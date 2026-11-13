@@ -120,7 +120,12 @@ test('B9a: a domain without host permission gets a navigation error, not the pag
 }) => {
   await sync(sw, ['example.test', 'noperm.test']);
   const page = await context.newPage();
-  await visit(page, origin('noperm.test'));
+  // The block rule fails the navigation itself.
+  const error = await page.goto(origin('noperm.test')).then(
+    () => null,
+    (err: Error) => err,
+  );
+  expect(error?.message).toContain('net::ERR_BLOCKED_BY_CLIENT');
   expect(page.url()).not.toContain('lock.html');
   expect(await page.title()).not.toBe('ORIGINAL noperm.test');
   await expect(page.locator('body')).not.toHaveText('ORIGINAL-PAGE');
@@ -133,10 +138,17 @@ test('B9b: an iframe of a locked domain does not load, even inside an unlocked p
 }) => {
   await sync(sw, ['example.test', 'noperm.test']);
   const page = await context.newPage();
+  const failed: { url: string; error: string | undefined }[] = [];
+  page.on('requestfailed', (r) => failed.push({ url: r.url(), error: r.failure()?.errorText }));
   await page.goto(origin('other.test') + '/frame');
   await expect(page).toHaveTitle('ORIGINAL other.test');
   const frame = page.frames().find((f) => f !== page.mainFrame());
   expect(frame).toBeDefined();
+  // The frame request was blocked by the extension, not merely slow or empty.
+  await expect
+    .poll(() => failed.find((f) => f.url === origin('example.test') + '/')?.error)
+    .toBe('net::ERR_BLOCKED_BY_CLIENT');
+  await expect.poll(() => frame!.url()).toBe('chrome-error://chromewebdata/');
   expect(frame!.url()).not.toBe(origin('example.test') + '/');
   expect(await frame!.title().catch(() => '')).not.toBe('ORIGINAL example.test');
 });

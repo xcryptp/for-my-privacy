@@ -38,8 +38,17 @@ Use the store ID of the published extension in place of `<EXTENSION_ID>`. Do thi
 | 11 | Install the policy file (macOS: `docs/hardening/macos/for-my-privacy-chrome.mobileconfig`; Windows: `docs/hardening/windows/for-my-privacy-chrome.reg`) and restart Chrome. `chrome://policy` lists `DeveloperToolsAvailability` = 2 and `ExtensionInstallForcelist` with no errors. | [ ] | [ ] |
 | 12 | F12 and Ctrl/Command-Option-I do nothing, and "Inspect" is missing from the page menu. | [ ] | [ ] |
 | 13 | The extension shows "Installed by your administrator" on `chrome://extensions`, and its Remove button and the toolbar menu's "Remove from Chrome" are greyed out. | [ ] | [ ] |
-| 14 | Remove the policy (macOS: delete the profile in System Settings, Privacy and Security, Profiles; Windows: delete the `DeveloperToolsAvailability` value and the `ExtensionInstallForcelist` key), restart Chrome and confirm the policies are gone from `chrome://policy`. | [ ] | [ ] |
-| 15 | With the unpacked build installed (no store ID, so no force-install), apply only the DevTools policy (`DeveloperToolsAvailability` = 2) and restart Chrome. Confirm the extension stays enabled and the lock still works, and note whether Developer mode on `chrome://extensions` can still be used (reload, Load unpacked). The README warns that this is unverified. Remove the policy again afterwards. | [ ] | [ ] |
+| 14 | Remove the policy (macOS: delete the profile in System Settings under Privacy and Security, Profiles, or on newer macOS under General, Device Management; Windows: delete the `DeveloperToolsAvailability` value and the `ExtensionInstallForcelist` key), restart Chrome and confirm the policies are gone from `chrome://policy`. | [ ] | [ ] |
+| 15 | With the unpacked build installed (no store ID, so no force-install), apply only the DevTools policy (`DeveloperToolsAvailability` = 2) and restart Chrome. Note whether the extension stays enabled and whether the lock still works, and whether Developer mode on `chrome://extensions` can still be used (reload, Load unpacked). The README warns that this is unverified. Remove the policy again afterwards. | [ ] | [ ] |
+
+## Real sites, restored tabs and the password
+
+| # | Check | macOS | Windows |
+| --- | --- | --- | --- |
+| 16 | Lock a real site that has its own service worker, such as `instagram.com`. Unlock, open a few of its pages, then in the same tab go to another site. Click **Lock now**. No tab shows the site, and Back and Forward in every tab show the lock screen or other sites, never the locked site's content. While locked, typing the address also shows the lock screen. | [ ] | [ ] |
+| 17 | Set Chrome's "On startup" to "Continue where you left off". With the site unlocked and open in a tab, quit Chrome completely and start it again. The restored tab shows the lock screen, not the site. | [ ] | [ ] |
+| 18 | With the site unlocked, close its tab, then click **Lock now**. Reopen the closed tab (Ctrl-Shift-T; macOS: Command-Shift-T). It lands on the lock screen. | [ ] | [ ] |
+| 19 | When creating the password, changing it and unlocking, note whether Chrome offers to save the password or suggests a generated one, and what it does if you accept. If Chrome saves it to Google Password Manager, the password would leave this device through Chrome's own sync; record exactly what Chrome did. | [ ] | [ ] |
 
 ## Record
 

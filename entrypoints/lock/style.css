@@ -71,9 +71,18 @@ body {
   font-size: 0.875rem;
 }
 
-/* Korean breaks between words, not inside them; Japanese has no spaces and keeps the default. */
+/* Korean breaks between words, not inside them. */
 :lang(ko) .subtitle,
 :lang(ko) .message {
   word-break: keep-all;
   overflow-wrap: break-word;
+}
+
+/* Japanese has no spaces: break between phrases where the browser can find them; without that
+   support the default line breaking stays. A long host name can still wrap (overflow-wrap). */
+@supports (word-break: auto-phrase) {
+  :lang(ja) .subtitle,
+  :lang(ja) .message {
+    word-break: auto-phrase;
+  }
 }
