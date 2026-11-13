@@ -12,6 +12,7 @@ describe('SETTINGS_GUARD_BUILD', () => {
   });
 
   it('is true with no env', async () => {
+    vi.stubEnv('VITE_FMP_SETTINGS_GUARD', undefined);
     expect(await loadFlag()).toBe(true);
   });
 

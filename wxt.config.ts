@@ -4,6 +4,7 @@ export default defineConfig({
   // Output dirs are per mode by default: chrome-mv3, chrome-mv3-noguard, chrome-mv3-e2e.
   manifest: ({ mode }) => ({
     name: '__MSG_extName__',
+    description: '__MSG_extDescription__',
     short_name: '__MSG_extShortName__',
     default_locale: 'en',
     minimum_chrome_version: '120',

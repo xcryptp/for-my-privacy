@@ -1,4 +1,5 @@
 {
   "extName": { "message": "For My Privacy: Site Password Lock" },
-  "extShortName": { "message": "For My Privacy" }
+  "extShortName": { "message": "For My Privacy" },
+  "extDescription": { "message": "Lock chosen sites and all their subdomains behind a password. It locks again when you step away." }
 }

@@ -61,7 +61,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         res.setHeader('content-type', 'text/html; charset=utf-8');
         if (req.url?.split('?')[0] === '/frame') {
           res.end(
-            `<!doctype html><title>FRAME ${host}</title><body><iframe src="http://example.test:${port}/"></iframe></body>`,
+            `<!doctype html><title>ORIGINAL ${host}</title><body><iframe src="http://example.test:${port}/"></iframe></body>`,
           );
           return;
         }
