@@ -12,10 +12,20 @@ export default defineConfig({
     default_locale: 'en',
     minimum_chrome_version: '120',
     // browsingData: a relock removes the locked sites' service workers and caches (no install warning).
-    permissions: ['declarativeNetRequest', 'storage', 'idle', 'tabs', 'browsingData'],
+    // webNavigation: frames of a locked site inside other pages (same install warning as tabs).
+    permissions: ['declarativeNetRequest', 'storage', 'idle', 'tabs', 'browsingData', 'webNavigation'],
+    // Quick lock without the settings password (the toolbar popup offers the same).
+    commands: {
+      'lock-now': {
+        suggested_key: { default: 'Alt+Shift+L' },
+        description: '__MSG_lockNowButton__',
+      },
+    },
     optional_host_permissions: ['*://*/*'],
     web_accessible_resources: [{ resources: ['lock.html'], matches: ['<all_urls>'] }],
     // Only the e2e build gets host permissions; noperm.test deliberately gets none.
-    ...(mode === 'e2e' ? { host_permissions: ['*://example.test/*', '*://*.example.test/*'] } : {}),
+    ...(mode === 'e2e'
+      ? { host_permissions: ['*://example.test/*', '*://*.example.test/*', '*://second.test/*', '*://*.second.test/*'] }
+      : {}),
   }),
 });

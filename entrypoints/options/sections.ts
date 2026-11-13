@@ -19,3 +19,18 @@ export function sectionFromHash(hash: string): Section {
   const name = hash.replace(/^#/, '').toLowerCase();
   return (SECTIONS as readonly string[]).includes(name) ? (name as Section) : DEFAULT_SECTION;
 }
+
+/**
+ * Which Remove button takes the focus after one was pressed: the one that moved into the removed
+ * row's place, or the last one when the removed row was the last. Null when the list is empty (the
+ * add field takes the focus then).
+ */
+export function focusAfterRemove(removedIndex: number, remaining: number): number | null {
+  if (remaining <= 0) return null;
+  return Math.min(Math.max(removedIndex, 0), remaining - 1);
+}
+
+/** True when the stored minutes differ from what was typed because the typed value was out of range. */
+export function idleWasClamped(typed: number, stored: number): boolean {
+  return Math.round(typed) !== stored;
+}

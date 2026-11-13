@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { formatCountdown, hostLabel, parseReturnTo } from '../../entrypoints/lock/main';
+import { parseReturnTo, parseToken, scopeHintText, wrongPasswordText } from '../../entrypoints/lock/main';
+import { countdownParts, formatCountdown, shouldRefocus } from '../../src/ui/countdown';
 
 describe('parseReturnTo', () => {
   it('returns the text after the first #u=', () => {
@@ -15,27 +16,79 @@ describe('parseReturnTo', () => {
   });
 });
 
-describe('formatCountdown', () => {
-  it('formats m:ss and rounds partial seconds up', () => {
-    expect(formatCountdown(30_000)).toBe('0:30');
-    expect(formatCountdown(900_000)).toBe('15:00');
-    expect(formatCountdown(61_000)).toBe('1:01');
-    expect(formatCountdown(1)).toBe('0:01');
-    expect(formatCountdown(0)).toBe('0:00');
-    expect(formatCountdown(-5)).toBe('0:00');
+// A stand-in for chrome.i18n: names the key and the substitutions.
+const tr = (key: string, subs?: string | string[]) => `${key}(${[subs ?? []].flat().join(',')})`;
+
+describe('countdownParts', () => {
+  it('splits into minutes and seconds and rounds partial seconds up', () => {
+    expect(countdownParts(30_000)).toEqual({ minutes: 0, seconds: 30 });
+    expect(countdownParts(900_000)).toEqual({ minutes: 15, seconds: 0 });
+    expect(countdownParts(125_000)).toEqual({ minutes: 2, seconds: 5 });
+    expect(countdownParts(1)).toEqual({ minutes: 0, seconds: 1 });
+    expect(countdownParts(0)).toEqual({ minutes: 0, seconds: 0 });
+    expect(countdownParts(-5)).toEqual({ minutes: 0, seconds: 0 });
   });
 });
 
-describe('hostLabel', () => {
-  it('names the host of an http(s) target', () => {
-    expect(hostLabel('https://www.example.test/a?b#c')).toBe('www.example.test');
+describe('formatCountdown', () => {
+  it('uses unit words: seconds under a minute, minutes alone, or both', () => {
+    expect(formatCountdown(30_000, tr)).toBe('waitSeconds(30)');
+    expect(formatCountdown(60_000, tr)).toBe('waitMinutes(1)');
+    expect(formatCountdown(900_000, tr)).toBe('waitMinutes(15)');
+    expect(formatCountdown(125_000, tr)).toBe('waitMinutesSeconds(2,5)');
+    expect(formatCountdown(61_000, tr)).toBe('waitMinutesSeconds(1,1)');
   });
 
-  it('names the extensions page and ignores anything else', () => {
-    expect(hostLabel('chrome://extensions/?id=x')).toBe('chrome://extensions');
-    expect(hostLabel('javascript:alert(1)')).toBeUndefined();
-    expect(hostLabel('not a url')).toBeUndefined();
-    expect(hostLabel(undefined)).toBeUndefined();
+  it('never shows zero while a wait is still running', () => {
+    expect(formatCountdown(1, tr)).toBe('waitSeconds(1)');
+  });
+});
+
+describe('shouldRefocus', () => {
+  const [page, button, input, other] = [{}, {}, {}, {}] as Element[];
+
+  it('refocuses the field when the focus is on the page, the disabled button, the field or nowhere', () => {
+    expect(shouldRefocus(null, page!, button!, input!)).toBe(true);
+    expect(shouldRefocus(page!, page!, button!, input!)).toBe(true);
+    expect(shouldRefocus(button!, page!, button!, input!)).toBe(true);
+    expect(shouldRefocus(input!, page!, button!, input!)).toBe(true);
+  });
+
+  it('leaves a control the person moved to alone', () => {
+    expect(shouldRefocus(other!, page!, button!, input!)).toBe(false);
+  });
+});
+
+describe('wrongPasswordText', () => {
+  it('says how many tries are left while there are some', () => {
+    expect(wrongPasswordText(4, tr)).toBe('wrongPasswordTries(4)');
+    expect(wrongPasswordText(2, tr)).toBe('wrongPasswordTries(2)');
+    expect(wrongPasswordText(1, tr)).toBe('wrongPasswordLastTry()');
+  });
+
+  it('is the plain message when no count is available or none is left', () => {
+    expect(wrongPasswordText(0, tr)).toBe('wrongPassword()');
+    expect(wrongPasswordText(undefined, tr)).toBe('wrongPassword()');
+  });
+});
+
+describe('scopeHintText', () => {
+  it('follows the unlock setting', () => {
+    expect(scopeHintText('all', 'www.example.test', tr)).toBe('unlockHintAll()');
+    expect(scopeHintText('site', 'www.example.test', tr)).toBe('unlockHintSite(www.example.test)');
+    expect(scopeHintText('site', undefined, tr)).toBe('unlockHintThisSite()');
+  });
+});
+
+describe('parseToken', () => {
+  it('returns the token after #t=', () => {
+    expect(parseToken('#t=abc123')).toBe('abc123');
+  });
+
+  it('returns undefined without a usable token', () => {
+    expect(parseToken('')).toBeUndefined();
+    expect(parseToken('#t=')).toBeUndefined();
+    expect(parseToken('#u=http://a.test/')).toBeUndefined();
   });
 });
 
@@ -80,5 +133,18 @@ describe('input border contrast (WCAG 1.4.11)', () => {
 
   it('uses the field outline token on inputs', () => {
     expect(css).toMatch(/input\[type='password'\][\s\S]*?border: 1px solid var\(--input-border\)/);
+  });
+});
+
+describe('warning box contrast', () => {
+  const css = read('src/ui/base.css');
+  const split = css.indexOf('@media (prefers-color-scheme: dark)');
+  const token = (block: string, name: string) => block.match(new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{6})`))?.[1] as string;
+
+  it.each([
+    ['light', css.slice(0, split)],
+    ['dark', css.slice(split)],
+  ])('the %s warning text is at least 4.5:1 on its background', (_theme, block) => {
+    expect(contrast(token(block, 'warn'), token(block, 'warn-bg'))).toBeGreaterThanOrEqual(4.5);
   });
 });

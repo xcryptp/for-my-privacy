@@ -66,14 +66,60 @@ body {
   color: var(--success);
 }
 
+.hint {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+/* Under the Unlock button; the button's own top margin is the gap above it. */
+.form .hint {
+  margin-top: var(--space-2);
+  text-align: center;
+}
+
+.forgot {
+  width: 100%;
+  font-size: 0.875rem;
+  text-align: start;
+}
+
+.forgot summary {
+  display: block;
+  min-height: 2rem;
+  padding: var(--space-1) 0;
+  color: var(--accent);
+  text-align: center;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  cursor: pointer;
+}
+
+.forgot p {
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.aside {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
 .settings {
-  margin-top: var(--space-3);
   font-size: 0.875rem;
 }
 
 /* Korean breaks between words, not inside them. */
 :lang(ko) .subtitle,
-:lang(ko) .message {
+:lang(ko) .message,
+:lang(ko) .hint,
+:lang(ko) .forgot p {
   word-break: keep-all;
   overflow-wrap: break-word;
 }
@@ -82,7 +128,9 @@ body {
    support the default line breaking stays. A long host name can still wrap (overflow-wrap). */
 @supports (word-break: auto-phrase) {
   :lang(ja) .subtitle,
-  :lang(ja) .message {
+  :lang(ja) .message,
+  :lang(ja) .hint,
+  :lang(ja) .forgot p {
     word-break: auto-phrase;
   }
 }

@@ -6,15 +6,20 @@ import {
   applySettings,
   handleMessage,
   onBrowserStart,
+  onCommand,
+  onFrameCommitted,
   onIdleStateChanged,
   onInstalled,
   onPermissionsRemoved,
+  onTabActivated,
   onTabRemoved,
   onTabReplaced,
   onTabUpdated,
+  openDomains,
   relock,
   siteDataOrigins,
   tabsToRelock,
+  triesLeft,
 } from '../../src/background/engine';
 import { isRequest } from '../../src/lib/messages';
 import { createRecord, verifyPassword } from '../../src/lib/password';
@@ -55,6 +60,8 @@ function installChrome() {
     permAdded: [] as Listener[],
     permRemoved: [] as Listener[],
     tabReplaced: [] as Listener[],
+    command: [] as Listener[],
+    committed: [] as Listener[],
   };
   const capture = (list: Listener[]) => ((cb: Listener) => void list.push(cb)) as never;
   vi.spyOn(browser.permissions, 'contains').mockImplementation((async () => true) as never);
@@ -62,6 +69,8 @@ function installChrome() {
   vi.spyOn(browser.permissions.onRemoved, 'addListener').mockImplementation(capture(listeners.permRemoved));
   vi.spyOn(browser.idle.onStateChanged, 'addListener').mockImplementation(capture(listeners.idle));
   vi.spyOn(browser.tabs.onReplaced, 'addListener').mockImplementation(capture(listeners.tabReplaced));
+  vi.spyOn(browser.commands.onCommand, 'addListener').mockImplementation(capture(listeners.command));
+  vi.spyOn(browser.webNavigation.onCommitted, 'addListener').mockImplementation(capture(listeners.committed));
   const setDetectionInterval = vi
     .spyOn(browser.idle, 'setDetectionInterval')
     .mockImplementation((() => undefined) as never);
@@ -71,7 +80,32 @@ function installChrome() {
 
 let chrome: ReturnType<typeof installChrome>;
 
+const MARKERS = ['all.unlocked.for-my-privacy.invalid', 'site.unlocked.for-my-privacy.invalid'];
 const domainsOf = (rules: Rule[], id: number) => rules.find((r) => r.id === id)?.condition.requestDomains;
+/** The unlocked domains in the session rule, without the scope marker. */
+const unlockedOf = (rules: Rule[]) => domainsOf(rules, RULE_UNLOCK)?.filter((d) => !MARKERS.includes(d));
+
+type TokenRecord = { url: string; tabId: number | null; source: 'engine' | 'claimed' };
+const tokenOf = (url: string | undefined) => (url?.startsWith(`${LOCK}#t=`) ? url.slice(`${LOCK}#t=`.length) : null);
+async function recordOf(token: string): Promise<TokenRecord | undefined> {
+  return (await browser.storage.session.get(`lockTarget:${token}`))[`lockTarget:${token}`] as TokenRecord | undefined;
+}
+/** A `#t=` lock page URL written as the `#u=` form of its stored target (else unchanged). */
+async function asTarget(url: string | undefined): Promise<string | undefined> {
+  const token = tokenOf(url);
+  if (token === null) return url;
+  const record = await recordOf(token);
+  return record ? `${LOCK}#u=${record.url}` : `${LOCK}#t=<unknown>`;
+}
+/** tabs.create / tabs.update arguments with lock page tokens resolved to their targets. */
+async function withTargets<T>(args: T[]): Promise<T[]> {
+  return Promise.all(
+    args.map(async (a) => {
+      if (!a || typeof a !== 'object' || !('url' in a)) return a;
+      return { ...a, url: await asTarget((a as { url?: string }).url) };
+    }),
+  );
+}
 
 async function seedPassword(extra: Partial<Parameters<typeof saveAuth>[0]> = {}) {
   await saveAuth({ password: await createRecord(PW, 1000), failures: 0, blockedUntil: 0, ...extra });
@@ -107,8 +141,10 @@ describe('handleMessage: setup', () => {
       state: {
         hasPassword: true,
         unlocked: false,
+        unlockedDomains: [],
         settingsUnlocked: true,
         waitMs: 0,
+        triesLeft: 5,
         settingsGuardAvailable: SETTINGS_GUARD_BUILD,
       },
     });
@@ -226,32 +262,64 @@ describe('handleMessage: unlock', () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it('one unlock sends every lock tab with a safe target back, the sender first', async () => {
+  it('one unlock sends back only the lock tabs the worker opened, the sender first', async () => {
+    const T = (n: number) => n.toString(16).padStart(32, '0');
     const update = vi.spyOn(browser.tabs, 'update').mockImplementation((async () => ({})) as never);
+    await browser.storage.session.set({
+      [`lockTarget:${T(7)}`]: { url: 'http://www.example.test/x', tabId: 7, source: 'engine' },
+      [`lockTarget:${T(3)}`]: { url: 'http://m.example.test/b?x=1#h', tabId: 3, source: 'engine' },
+      [`lockTarget:${T(11)}`]: { url: 'chrome://extensions/', tabId: 11, source: 'engine' },
+      // Claimed from a `#u=` URL anyone can type: only its own tab's unlock returns it.
+      [`lockTarget:${T(13)}`]: { url: 'http://www.example.test/c', tabId: 13, source: 'claimed' },
+      // A token copied into another tab is not that tab's.
+      [`lockTarget:${T(14)}`]: { url: 'http://www.example.test/d', tabId: 99, source: 'engine' },
+      [`lockTarget:${T(15)}`]: { url: 'https://evil.test/', tabId: 15, source: 'engine' },
+    });
     vi.spyOn(browser.tabs, 'query').mockImplementation((async () => [
-      { id: 3, url: `${LOCK}#u=http://m.example.test/b?x=1#h` },
-      { id: 7, url: `${LOCK}#u=http://www.example.test/x` },
-      { id: 8, url: `${LOCK}#u=https://evil.test/` },
-      { id: 9, url: `${LOCK}#u=javascript:alert(1)` },
+      { id: 3, url: `${LOCK}#t=${T(3)}` },
+      { id: 7, url: `${LOCK}#t=${T(7)}` },
+      { id: 8, url: `${LOCK}#u=http://www.example.test/crafted` },
       { id: 10, url: 'http://other.test/' },
-      { id: 11, url: `${LOCK}#u=chrome://extensions/` },
+      { id: 11, url: `${LOCK}#t=${T(11)}` },
+      { id: 13, url: `${LOCK}#t=${T(13)}` },
+      { id: 14, url: `${LOCK}#t=${T(14)}` },
+      { id: 15, url: `${LOCK}#t=${T(15)}` },
+      { id: 16, url: `${LOCK}#u=chrome://extensions/` },
       { id: 12, url: `${LOCK}` },
     ]) as never);
     await seedPassword();
     await saveSettings({ domains: ['example.test'] });
-    await handleMessage({ type: 'unlock', password: PW, returnTo: 'http://www.example.test/x' }, { tab: { id: 7 }, frameId: 0 });
+    await handleMessage({ type: 'unlock', password: PW, token: T(7) }, { tab: { id: 7 }, frameId: 0 });
     expect(update.mock.calls).toEqual([
       [7, { url: 'http://www.example.test/x' }],
       [3, { url: 'http://m.example.test/b?x=1#h' }],
       [11, { url: 'chrome://extensions/' }],
     ]);
+    // Used tokens are gone; the others stay.
+    expect(await recordOf(T(7))).toBeUndefined();
+    expect(await recordOf(T(3))).toBeUndefined();
+    expect(await recordOf(T(13))).toBeDefined();
 
-    // A wrong password moves no tab; an unlock from a page with no tab still returns the lock tabs.
+    // A wrong password moves no tab.
     update.mockClear();
-    await handleMessage({ type: 'unlock', password: WRONG }, {});
+    await handleMessage({ type: 'lockNow' }, {});
+    await handleMessage({ type: 'unlock', password: WRONG, token: T(13) }, { tab: { id: 13 }, frameId: 0 });
     expect(update).not.toHaveBeenCalled();
-    await handleMessage({ type: 'unlock', password: PW }, {});
-    expect(update.mock.calls.map((c) => c[0])).toEqual([3, 7, 11]);
+    // The claimed tab returns on its own unlock; the token is read from the sender's URL too.
+    await handleMessage({ type: 'unlock', password: PW }, { tab: { id: 13 }, frameId: 0, url: `${LOCK}#t=${T(13)}` });
+    expect(update.mock.calls).toEqual([[13, { url: 'http://www.example.test/c' }]]);
+    // Another tab's token returns nothing.
+    update.mockClear();
+    await handleMessage({ type: 'unlock', password: PW, token: T(14) }, { tab: { id: 7 }, frameId: 0 });
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('the old returnTo is followed for http(s) only, never the extensions page', async () => {
+    const update = vi.spyOn(browser.tabs, 'update').mockImplementation((async () => ({})) as never);
+    await seedPassword();
+    await saveSettings({ domains: ['example.test'] });
+    await handleMessage({ type: 'unlock', password: PW, returnTo: 'chrome://extensions/' }, { tab: { id: 7 }, frameId: 0 });
+    expect(update).not.toHaveBeenCalled();
   });
 
   it('still unlocks and returns the sender when listing the other tabs fails', async () => {
@@ -408,8 +476,10 @@ describe('handleMessage: changePassword, lockNow, getState', () => {
       state: {
         hasPassword: true,
         unlocked: false,
+        unlockedDomains: [],
         settingsUnlocked: false,
         waitMs: 30_000,
+        triesLeft: 0,
         settingsGuardAvailable: SETTINGS_GUARD_BUILD,
       },
     });
@@ -504,7 +574,7 @@ describe('relock', () => {
     const { create, remove } = stubTabs(TABS);
     await relock('manual');
     expect(chrome.state.session).toEqual([]);
-    expect(create.mock.calls.map((c) => c[0])).toEqual([
+    expect((await withTargets(create.mock.calls.map((c) => c[0])))).toEqual([
       { windowId: 1, index: 0, pinned: true, active: false, url: `${LOCK}#u=https://www.example.test/a` },
       { windowId: 2, index: 1, pinned: false, active: true, url: `${LOCK}#u=http://example.test/` },
       { windowId: 2, index: 2, pinned: false, active: false, url: `${LOCK}#u=chrome://extensions/` },
@@ -601,7 +671,10 @@ describe('relock', () => {
     await relock('idle');
     expect(create).toHaveBeenCalledTimes(2);
     expect(remove.mock.calls.map((c) => c[0])).toEqual([1, 1, 3, 3]);
-    expect(update.mock.calls).toEqual([[3, { url: `${LOCK}#u=http://example.test/` }]]);
+    expect(await withTargets(update.mock.calls.map((c) => c[1]))).toEqual([{ url: `${LOCK}#u=http://example.test/` }]);
+    expect(update.mock.calls[0]![0]).toBe(3);
+    // The token of that last-resort lock page belongs to the tab itself.
+    expect((await recordOf(tokenOf((update.mock.calls[0]![1] as { url: string }).url)!))?.tabId).toBe(3);
   });
 
   it('touches no tabs before a password exists', async () => {
@@ -761,13 +834,9 @@ describe('background listeners', () => {
     await seedPassword();
     start();
     await vi.waitFor(() => expect(remove).toHaveBeenCalledWith(4));
-    expect(create).toHaveBeenCalledWith({
-      windowId: 1,
-      index: 1,
-      pinned: false,
-      active: true,
-      url: `${LOCK}#u=chrome://extensions/?id=abc`,
-    });
+    expect(await withTargets(create.mock.calls.map((c) => c[0]))).toEqual([
+      { windowId: 1, index: 1, pinned: false, active: true, url: `${LOCK}#u=chrome://extensions/?id=abc` },
+    ]);
     expect(remove).toHaveBeenCalledTimes(1);
 
     remove.mockClear();
@@ -822,7 +891,8 @@ describe('background listeners', () => {
     await fire('https://example.test/');
     await fire('chrome://extensions/?id=abc');
     await vi.waitFor(() => expect(update).toHaveBeenCalledTimes(1));
-    expect(update).toHaveBeenCalledWith(3, { url: `${LOCK}#u=chrome://extensions/?id=abc` });
+    expect(update.mock.calls[0]![0]).toBe(3);
+    expect(await withTargets([update.mock.calls[0]![1]])).toEqual([{ url: `${LOCK}#u=chrome://extensions/?id=abc` }]);
 
     update.mockClear();
     await handleMessage({ type: 'unlock', password: PW }, {});
@@ -940,7 +1010,7 @@ describe('tabs that showed a locked site (back/forward cache)', () => {
     for (const id of [1, 3, 9]) await onTabUpdated(id, { url: 'https://example.test/' });
     const { create, remove } = stubTabs(tabs);
     await relock('idle');
-    expect(create.mock.calls.map((c) => c[0])).toEqual([
+    expect((await withTargets(create.mock.calls.map((c) => c[0])))).toEqual([
       { windowId: 1, index: 0, pinned: true, active: false, url: 'https://other.test/now' },
       { windowId: 2, index: 0, pinned: false, active: true, url: `${LOCK}#u=https://www.example.test/still` },
     ]);
@@ -1192,7 +1262,7 @@ describe('service workers and caches of locked sites (L1)', () => {
     vi.mocked(browser.permissions.contains).mockImplementation((async ({ origins }: { origins: string[] }) =>
       !origins[0]!.includes('noperm')) as never);
     await onBrowserStart();
-    expect(create.mock.calls.map((c) => (c[0] as { url: string }).url)).toEqual([
+    expect((await withTargets(create.mock.calls.map((c) => c[0] as { url: string }))).map((a) => a.url)).toEqual([
       `${LOCK}#u=https://www.example.test/feed`,
       `${LOCK}#u=https://noperm.test/`,
     ]);
@@ -1240,7 +1310,7 @@ describe('a locked site that loads anyway is replaced (L2)', () => {
     await seedLocked();
     const { create, remove } = stubTab({ url: URL_ });
     await onTabUpdated(3, { url: URL_ });
-    expect(create.mock.calls.map((c) => c[0])).toEqual([
+    expect((await withTargets(create.mock.calls.map((c) => c[0])))).toEqual([
       { windowId: 1, index: 2, pinned: false, active: true, url: `${LOCK}#u=${URL_}` },
     ]);
     expect(remove.mock.calls.map((c) => c[0])).toEqual([3]);
@@ -1295,7 +1365,7 @@ describe('a locked site that loads anyway is replaced (L2)', () => {
     vi.mocked(browser.permissions.contains).mockImplementation((async () => false) as never);
     const { create, remove } = stubTab({ url: URL_ });
     await onTabUpdated(3, { url: URL_ });
-    expect(create.mock.calls.map((c) => (c[0] as { url: string }).url)).toEqual([`${LOCK}#u=${URL_}`]);
+    expect((await withTargets(create.mock.calls.map((c) => c[0] as { url: string }))).map((a) => a.url)).toEqual([`${LOCK}#u=${URL_}`]);
     expect(remove.mock.calls.map((c) => c[0])).toEqual([3]);
   });
 
@@ -1333,5 +1403,557 @@ describe('a locked site that loads anyway is replaced (L2)', () => {
     const { remove } = stubTab({ url: URL_ });
     await fakeBrowser.tabs.onUpdated.trigger(3, { status: 'loading' } as never, { ...TAB } as never);
     await vi.waitFor(() => expect(remove).toHaveBeenCalledWith(3));
+  });
+});
+
+describe('frames of a locked site inside other pages (E1, E2)', () => {
+  beforeEach(forgetTrackedTabs);
+  type FakeTab = { id: number; windowId: number; index: number; pinned: boolean; active: boolean; url: string };
+  const HOST: FakeTab = { id: 4, windowId: 1, index: 0, pinned: false, active: true, url: 'https://other.test/embed' };
+  const FRAMES_KEY = 'frameHostTabs';
+  const framed = async () => (await browser.storage.session.get(FRAMES_KEY))[FRAMES_KEY] as number[] | undefined;
+  const shown = async () => (await browser.storage.session.get('shownLockedTabs')).shownLockedTabs as number[] | undefined;
+  const origins = async () => (await browser.storage.local.get('shownLockedOrigins')).shownLockedOrigins as string[];
+  const commit = (tabId: number, frameId: number, url: string, transitionType = 'link') =>
+    onFrameCommitted({ tabId, frameId, url, transitionType });
+
+  function stubTabs(tabs: FakeTab[]) {
+    vi.spyOn(browser.tabs, 'query').mockImplementation((async () => tabs) as never);
+    const create = vi.spyOn(browser.tabs, 'create').mockImplementation((async () => ({ id: 99 })) as never);
+    const remove = vi.spyOn(browser.tabs, 'remove').mockImplementation((async () => {}) as never);
+    const reload = vi.spyOn(browser.tabs, 'reload').mockImplementation((async () => {}) as never);
+    return { create, remove, reload };
+  }
+
+  it('records a tab whose frame committed a page of a listed domain, and that frame origin', async () => {
+    await seedUnlocked(['example.test']);
+    await commit(4, 7, 'https://a.b.c.example.test/embed');
+    await commit(5, 3, 'https://notexample.test/');
+    await commit(6, 0, 'https://example.test/'); // a main frame is the tab guard's job
+    await commit(-1, 2, 'https://example.test/'); // not in a tab
+    await commit(8, 2, 'chrome-error://chromewebdata/');
+    expect(await framed()).toEqual([4]);
+    expect(await origins()).toEqual(['https://a.b.c.example.test']);
+    // Recorded while locked too, so a commit right before a relock is never missed.
+    await handleMessage({ type: 'lockNow' }, {});
+    await commit(9, 1, 'http://example.test:8080/');
+    expect(await framed()).toEqual([9]);
+  });
+
+  it('a relock reloads the host tab after the site data removal, keeping it, and removes the frame origin', async () => {
+    await seedUnlocked(['example.test']);
+    await commit(4, 7, 'https://a.b.c.example.test/embed');
+    const { create, remove, reload } = stubTabs([HOST]);
+    let removalDone = false;
+    chrome.browsingData.remove.mockImplementationOnce(async () => {
+      await new Promise((r) => setTimeout(r, 10));
+      removalDone = true;
+    });
+    reload.mockImplementation((async () => {
+      expect(removalDone).toBe(true);
+    }) as never);
+    await relock('manual');
+    expect(reload.mock.calls.map((c) => c[0])).toEqual([4]);
+    expect(create).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+    expect((chrome.browsingData.remove.mock.calls[0]![0] as { origins: string[] }).origins).toContain(
+      'https://a.b.c.example.test',
+    );
+    expect(await framed()).toBeUndefined();
+  });
+
+  it('a host tab that cannot be reloaded is recreated instead', async () => {
+    await seedUnlocked(['example.test']);
+    await commit(4, 7, 'https://example.test/embed');
+    const { create, remove, reload } = stubTabs([HOST]);
+    reload.mockImplementation((async () => {
+      throw new Error('cannot reload');
+    }) as never);
+    await relock('manual');
+    expect(create.mock.calls.map((c) => c[0])).toEqual([
+      { windowId: 1, index: 0, pinned: false, active: true, url: 'https://other.test/embed' },
+    ]);
+    expect(remove.mock.calls.map((c) => c[0])).toEqual([4]);
+  });
+
+  it('a host tab that moved on to a new page is recreated (the embedding page is in its history)', async () => {
+    await seedUnlocked(['example.test']);
+    await commit(4, 7, 'https://example.test/embed');
+    await commit(4, 0, 'https://other.test/embed', 'reload'); // same page reloaded: still a host
+    expect(await framed()).toEqual([4]);
+    await commit(4, 0, 'https://other.test/next', 'link');
+    expect(await framed()).toEqual([]);
+    expect(await shown()).toEqual([4]);
+    const { create, reload } = stubTabs([{ ...HOST, url: 'https://other.test/next' }]);
+    await relock('manual');
+    expect(reload).not.toHaveBeenCalled();
+    expect(create.mock.calls.map((c) => (c[0] as { url: string }).url)).toEqual(['https://other.test/next']);
+  });
+
+  it('a tab that is itself on the locked site gets the lock page, not a reload', async () => {
+    await seedUnlocked(['example.test']);
+    await commit(4, 7, 'https://example.test/embed');
+    const { reload, remove } = stubTabs([{ ...HOST, url: 'https://example.test/page' }]);
+    await relock('manual');
+    expect(reload).not.toHaveBeenCalled();
+    expect(remove.mock.calls.map((c) => c[0])).toEqual([4]);
+  });
+
+  it('follows replaced tabs and forgets closed ones', async () => {
+    await seedUnlocked(['example.test']);
+    await commit(4, 7, 'https://example.test/embed');
+    await commit(5, 7, 'https://example.test/embed');
+    await onTabReplaced(40, 4);
+    await onTabRemoved(5);
+    expect(await framed()).toEqual([40]);
+  });
+
+  it('the webNavigation listener passes the commit details', async () => {
+    background.main();
+    await seedUnlocked(['example.test']);
+    await Promise.all(
+      chrome.listeners.committed.map((l) =>
+        (l as (d: unknown) => unknown)({ tabId: 4, frameId: 2, url: 'https://example.test/x', transitionType: 'link' }),
+      ),
+    );
+    await vi.waitFor(async () => expect(await framed()).toEqual([4]));
+  });
+});
+
+describe('lock page targets (E3)', () => {
+  beforeEach(forgetTrackedTabs);
+  const T = (n: number) => n.toString(16).padStart(32, '0');
+
+  it('claimTarget binds a safe #u= target to the sending tab and returns a token and the host', async () => {
+    await seedPassword();
+    await saveSettings({ domains: ['example.test'] });
+    const res = await handleMessage(
+      { type: 'claimTarget', raw: 'http://www.example.test/p?q=1#h' },
+      { tab: { id: 7 }, frameId: 0 },
+    );
+    expect(res).toMatchObject({ ok: true, host: 'www.example.test', state: { unlocked: false } });
+    const token = res.ok ? res.token : '';
+    expect(token).toMatch(/^[0-9a-f]{32}$/);
+    expect(await recordOf(token)).toEqual({ url: 'http://www.example.test/p?q=1#h', tabId: 7, source: 'claimed' });
+    // The page can read its target again, from its own tab only.
+    expect(await handleMessage({ type: 'describeTarget', token }, { tab: { id: 7 }, frameId: 0 })).toMatchObject({
+      ok: true,
+      token,
+      host: 'www.example.test',
+    });
+    expect(await handleMessage({ type: 'describeTarget', token }, { tab: { id: 8 }, frameId: 0 })).toMatchObject({
+      ok: false,
+      error: 'invalid_target',
+    });
+    expect(
+      await handleMessage({ type: 'describeTarget', token: T(1) }, { tab: { id: 7 }, frameId: 0 }),
+    ).toMatchObject({ ok: false, error: 'invalid_target' });
+  });
+
+  it('claimTarget refuses anything but an http(s) URL of a listed domain, frames and pages without a tab', async () => {
+    await seedPassword();
+    await saveSettings({ domains: ['example.test'] });
+    const top = { tab: { id: 7 }, frameId: 0 };
+    for (const raw of ['https://evil.test/', 'javascript:alert(1)', 'chrome://extensions/', '', 'not a url']) {
+      expect(await handleMessage({ type: 'claimTarget', raw }, top), raw).toMatchObject({
+        ok: false,
+        error: 'invalid_target',
+      });
+    }
+    for (const sender of [{ tab: { id: 7 }, frameId: 2 }, {}]) {
+      expect(await handleMessage({ type: 'claimTarget', raw: 'https://example.test/' }, sender)).toMatchObject({
+        ok: false,
+        error: 'invalid_target',
+      });
+    }
+    const all = await browser.storage.session.get(null);
+    expect(Object.keys(all).filter((k) => k.startsWith('lockTarget:'))).toEqual([]);
+  });
+
+  it('lock pages the worker opens carry a token, never the private URL', async () => {
+    await seedUnlocked(['example.test']);
+    vi.spyOn(browser.tabs, 'query').mockImplementation((async () => [
+      { id: 1, windowId: 1, index: 0, pinned: false, active: true, url: 'https://www.example.test/secret?q=1' },
+    ]) as never);
+    const create = vi.spyOn(browser.tabs, 'create').mockImplementation((async () => ({ id: 42 })) as never);
+    vi.spyOn(browser.tabs, 'remove').mockImplementation((async () => {}) as never);
+    await relock('manual');
+    const url = (create.mock.calls[0]![0] as { url: string }).url;
+    expect(url).toMatch(new RegExp(`^${LOCK.replace(/[.]/g, '\\.')}#t=[0-9a-f]{32}$`));
+    expect(url).not.toContain('example.test');
+    expect(await recordOf(tokenOf(url)!)).toEqual({
+      url: 'https://www.example.test/secret?q=1',
+      tabId: 42,
+      source: 'engine',
+    });
+    // The new tab may describe and unlock with it.
+    expect(
+      await handleMessage({ type: 'describeTarget', token: tokenOf(url)! }, { tab: { id: 42 }, frameId: 0 }),
+    ).toMatchObject({ ok: true, host: 'www.example.test' });
+  });
+
+  it('a request that arrives before the new tab is bound waits for the binding', async () => {
+    await seedUnlocked(['example.test']);
+    vi.spyOn(browser.tabs, 'query').mockImplementation((async () => [
+      { id: 1, windowId: 1, index: 0, pinned: false, active: true, url: 'https://example.test/' },
+    ]) as never);
+    let describe: Promise<unknown> | undefined;
+    vi.spyOn(browser.tabs, 'create').mockImplementation((async (props: { url: string }) => {
+      // The lock page asks before tabs.create has resolved.
+      describe = handleMessage({ type: 'describeTarget', token: tokenOf(props.url)! }, { tab: { id: 42 }, frameId: 0 });
+      await new Promise((r) => setTimeout(r, 5));
+      return { id: 42 };
+    }) as never);
+    vi.spyOn(browser.tabs, 'remove').mockImplementation((async () => {}) as never);
+    await relock('manual');
+    expect(await describe).toMatchObject({ ok: true, host: 'example.test' });
+  });
+
+  it('a closed tab forgets its tokens', async () => {
+    await browser.storage.session.set({
+      [`lockTarget:${T(1)}`]: { url: 'https://example.test/', tabId: 5, source: 'engine' },
+      [`lockTarget:${T(2)}`]: { url: 'https://example.test/', tabId: 6, source: 'claimed' },
+    });
+    await onTabRemoved(5);
+    expect(await recordOf(T(1))).toBeUndefined();
+    expect(await recordOf(T(2))).toBeDefined();
+  });
+
+  it('isRequest accepts the token protocol', () => {
+    expect(isRequest({ type: 'claimTarget', raw: 'https://example.test/' })).toBe(true);
+    expect(isRequest({ type: 'claimTarget', raw: 'x'.repeat(16_385) })).toBe(false);
+    expect(isRequest({ type: 'claimTarget' })).toBe(false);
+    expect(isRequest({ type: 'describeTarget', token: T(1) })).toBe(true);
+    expect(isRequest({ type: 'describeTarget', token: 1 })).toBe(false);
+    expect(isRequest({ type: 'unlock', password: PW, token: T(1) })).toBe(true);
+    expect(isRequest({ type: 'unlock', password: PW, token: 5 })).toBe(false);
+  });
+});
+
+describe('tries left (E4)', () => {
+  it('counts the wrong answers left before the first wait', async () => {
+    expect([0, 1, 4, 5, 6, 20].map(triesLeft)).toEqual([5, 4, 1, 0, 0, 0]);
+    await seedPassword({ failures: 3 });
+    expect((await handleMessage({ type: 'getState' }, {})).state.triesLeft).toBe(2);
+    await handleMessage({ type: 'unlock', password: WRONG }, {});
+    expect((await handleMessage({ type: 'getState' }, {})).state.triesLeft).toBe(1);
+  });
+});
+
+describe('lock-now keyboard command (E5)', () => {
+  it('relocks without a password; other commands do nothing', async () => {
+    await seedUnlocked(['example.test']);
+    await onCommand('something-else');
+    expect(chrome.state.session).not.toEqual([]);
+    await onCommand('lock-now');
+    expect(chrome.state.session).toEqual([]);
+  });
+
+  it('the commands listener is registered at start', async () => {
+    background.main();
+    await seedUnlocked(['example.test']);
+    await Promise.all(chrome.listeners.command.map((l) => (l as (c: string) => unknown)('lock-now')));
+    await vi.waitFor(() => expect(chrome.state.session).toEqual([]));
+  });
+});
+
+describe('review minors (E6)', () => {
+  beforeEach(forgetTrackedTabs);
+  const stored = async () => (await browser.storage.local.get('shownLockedOrigins')).shownLockedOrigins;
+
+  it('N1: a relock with the fallback settings keeps the stored origins', async () => {
+    await seedUnlocked(['example.test']);
+    await onTabUpdated(5, { url: 'https://deep.example.test/' });
+    vi.spyOn(browser.tabs, 'query').mockImplementation((async () => []) as never);
+    // The worker restarted (no last known settings) and the settings read fails: the defaults
+    // list nothing, but that must not wipe the stored origins.
+    const get = browser.storage.local.get.bind(browser.storage.local);
+    vi.spyOn(browser.storage.local, 'get').mockImplementation((async (key: unknown) => {
+      if (key === 'settings' || (Array.isArray(key) && key.includes('settings'))) throw new Error('down');
+      return get(key as never);
+    }) as never);
+    await relock('idle');
+    vi.mocked(browser.storage.local.get).mockRestore();
+    expect(await stored()).toEqual(['https://deep.example.test']);
+  });
+
+  it('N2: saving settings drops the stored origins of domains no longer listed', async () => {
+    await seedUnlocked(['example.test', 'other.test']);
+    await onTabUpdated(5, { url: 'https://app.other.test/' });
+    await onTabUpdated(6, { url: 'https://example.test/' });
+    await applySettings({ ...DEFAULT_SETTINGS, domains: ['example.test'] });
+    expect(await stored()).toEqual(['https://example.test']);
+  });
+
+  it('N3: with the domain list unknown, the tab is guarded once the settings can be read', async () => {
+    await seedPassword();
+    await saveSettings({ domains: ['example.test'] });
+    vi.spyOn(browser.tabs, 'get').mockImplementation((async () => ({
+      id: 3,
+      windowId: 1,
+      index: 0,
+      pinned: false,
+      active: true,
+      url: 'https://example.test/',
+    })) as never);
+    vi.spyOn(browser.tabs, 'create').mockImplementation((async () => ({ id: 99 })) as never);
+    const remove = vi.spyOn(browser.tabs, 'remove').mockImplementation((async () => {}) as never);
+    // The first settings read fails (and this worker knows no earlier settings).
+    const get = browser.storage.local.get.bind(browser.storage.local);
+    let failures = 1;
+    vi.spyOn(browser.storage.local, 'get').mockImplementation((async (key: unknown) => {
+      const wantsSettings = key === 'settings' || (Array.isArray(key) && key.includes('settings'));
+      if (wantsSettings && failures-- > 0) throw new Error('down');
+      return get(key as never);
+    }) as never);
+    await onTabUpdated(3, { url: 'https://example.test/' });
+    expect(remove.mock.calls.map((c) => c[0])).toEqual([3]);
+  });
+
+  it('N4: the tab is recorded even when its origin cannot be stored', async () => {
+    await seedUnlocked(['example.test']);
+    vi.spyOn(browser.storage.local, 'set').mockImplementation((async () => {
+      throw new Error('local down');
+    }) as never);
+    await onTabUpdated(5, { url: 'https://example.test/' });
+    expect((await browser.storage.session.get('shownLockedTabs')).shownLockedTabs).toEqual([5]);
+  });
+});
+
+describe("unlock scope 'site' (E7)", () => {
+  beforeEach(forgetTrackedTabs);
+  const T = (n: number) => n.toString(16).padStart(32, '0');
+  const DOMAINS = ['example.test', 'second.test'];
+
+  async function seedSite(domains = DOMAINS) {
+    await seedPassword();
+    await saveSettings({ domains, unlockScope: 'site' });
+    await applySettings({ ...DEFAULT_SETTINGS, domains, unlockScope: 'site' });
+  }
+  async function lockTab(id: number, url: string, source: 'engine' | 'claimed' = 'engine') {
+    await browser.storage.session.set({ [`lockTarget:${T(id)}`]: { url, tabId: id, source } });
+  }
+  const unlockFrom = (id: number, password = PW) =>
+    handleMessage({ type: 'unlock', password, token: T(id) }, { tab: { id }, frameId: 0 });
+
+  it('an unlock opens only the lock page’s own domain; the next unlock adds its domain', async () => {
+    vi.spyOn(browser.tabs, 'update').mockImplementation((async () => ({})) as never);
+    vi.spyOn(browser.tabs, 'query').mockImplementation((async () => []) as never);
+    await seedSite();
+    await lockTab(1, 'https://www.example.test/a');
+    await lockTab(2, 'https://second.test/b');
+    const first = await unlockFrom(1);
+    expect(first).toMatchObject({ ok: true, state: { unlocked: true, unlockedDomains: ['example.test'] } });
+    expect(unlockedOf(chrome.state.session)).toEqual(['example.test']);
+    expect(domainsOf(chrome.state.session, RULE_UNLOCK)).toContain('site.unlocked.for-my-privacy.invalid');
+    const second = await unlockFrom(2);
+    expect(second.state.unlockedDomains).toEqual(['example.test', 'second.test']);
+    // A relock clears every domain.
+    await relock('manual');
+    expect(chrome.state.session).toEqual([]);
+    expect((await handleMessage({ type: 'getState' }, {})).state.unlockedDomains).toEqual([]);
+  });
+
+  it('an unlock without a target of a listed domain opens nothing', async () => {
+    await seedSite();
+    const res = await handleMessage({ type: 'unlock', password: PW }, {});
+    expect(res).toMatchObject({ ok: true, state: { unlocked: false, unlockedDomains: [] } });
+    expect(chrome.state.session).toEqual([]);
+  });
+
+  it('only lock tabs of the opened domain go back; the other domain stays on its lock page', async () => {
+    const update = vi.spyOn(browser.tabs, 'update').mockImplementation((async () => ({})) as never);
+    await seedSite();
+    await lockTab(1, 'https://www.example.test/a');
+    await lockTab(2, 'https://second.test/b');
+    await lockTab(3, 'https://m.example.test/c');
+    await lockTab(4, 'chrome://extensions/');
+    vi.spyOn(browser.tabs, 'query').mockImplementation((async () =>
+      [1, 2, 3, 4].map((id) => ({ id, url: `${LOCK}#t=${T(id)}` }))) as never);
+    await unlockFrom(1);
+    expect(update.mock.calls).toEqual([
+      [1, { url: 'https://www.example.test/a' }],
+      [3, { url: 'https://m.example.test/c' }],
+    ]);
+  });
+
+  it('the tab guard still replaces a tab of a domain that was not unlocked', async () => {
+    vi.spyOn(browser.tabs, 'update').mockImplementation((async () => ({})) as never);
+    vi.spyOn(browser.tabs, 'query').mockImplementation((async () => []) as never);
+    await seedSite();
+    await lockTab(1, 'https://example.test/');
+    await unlockFrom(1);
+    let current = 'https://example.test/feed';
+    vi.spyOn(browser.tabs, 'get').mockImplementation((async () => ({
+      id: 3,
+      windowId: 1,
+      index: 0,
+      pinned: false,
+      active: true,
+      url: current,
+    })) as never);
+    vi.spyOn(browser.tabs, 'create').mockImplementation((async () => ({ id: 99 })) as never);
+    const remove = vi.spyOn(browser.tabs, 'remove').mockImplementation((async () => {}) as never);
+    await onTabUpdated(3, { url: current });
+    expect(remove).not.toHaveBeenCalled();
+    current = 'https://second.test/';
+    await onTabUpdated(3, { url: current });
+    expect(remove.mock.calls.map((c) => c[0])).toEqual([3]);
+  });
+
+  it('the extensions-page guard stays on after a site unlock', async () => {
+    const update = vi.spyOn(browser.tabs, 'update').mockImplementation((async () => ({})) as never);
+    vi.spyOn(browser.tabs, 'query').mockImplementation((async () => []) as never);
+    await seedSite();
+    await lockTab(1, 'https://example.test/');
+    await unlockFrom(1);
+    update.mockClear();
+    await onTabUpdated(3, { url: 'chrome://extensions/' });
+    expect(update.mock.calls[0]![0]).toBe(3);
+    expect(await withTargets([update.mock.calls[0]![1]])).toEqual([{ url: `${LOCK}#u=chrome://extensions/` }]);
+    // An extensions lock page unlock opens nothing and does not navigate there.
+    const token = tokenOf((update.mock.calls[0]![1] as { url: string }).url)!;
+    update.mockClear();
+    await handleMessage({ type: 'unlock', password: PW, token }, { tab: { id: 3 }, frameId: 0 });
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('settings changes: an added domain stays locked, a removed one leaves the rule, none left clears it', async () => {
+    vi.spyOn(browser.tabs, 'update').mockImplementation((async () => ({})) as never);
+    vi.spyOn(browser.tabs, 'query').mockImplementation((async () => []) as never);
+    await seedSite(['example.test']);
+    await lockTab(1, 'https://example.test/');
+    await unlockFrom(1);
+    await applySettings({ ...DEFAULT_SETTINGS, unlockScope: 'site', domains: ['example.test', 'second.test'] });
+    expect(unlockedOf(chrome.state.session)).toEqual(['example.test']);
+    await applySettings({ ...DEFAULT_SETTINGS, unlockScope: 'site', domains: ['second.test'] });
+    expect(chrome.state.session).toEqual([]);
+  });
+
+  it("'all' scope keeps opening every listed domain, including one added while unlocked", async () => {
+    await seedUnlocked(['example.test']);
+    expect((await handleMessage({ type: 'getState' }, {})).state.unlockedDomains).toEqual(['example.test']);
+    await applySettings({ ...DEFAULT_SETTINGS, domains: ['example.test', 'second.test'] });
+    expect(unlockedOf(chrome.state.session)).toEqual(['example.test', 'second.test']);
+  });
+
+  it('switching the scope while unlocked relocks (both ways)', async () => {
+    const create = vi.spyOn(browser.tabs, 'create').mockImplementation((async () => ({ id: 99 })) as never);
+    vi.spyOn(browser.tabs, 'remove').mockImplementation((async () => {}) as never);
+    vi.spyOn(browser.tabs, 'update').mockImplementation((async () => ({})) as never);
+    vi.spyOn(browser.tabs, 'query').mockImplementation((async () => [
+      { id: 5, windowId: 1, index: 0, pinned: false, active: true, url: 'https://example.test/' },
+    ]) as never);
+    await seedUnlocked(['example.test']);
+    await applySettings({ ...DEFAULT_SETTINGS, domains: ['example.test'], unlockScope: 'site' });
+    expect(chrome.state.session).toEqual([]);
+    expect(create).toHaveBeenCalledTimes(1);
+
+    await lockTab(1, 'https://example.test/');
+    await saveSettings({ unlockScope: 'site' });
+    await unlockFrom(1);
+    expect(unlockedOf(chrome.state.session)).toEqual(['example.test']);
+    await applySettings({ ...DEFAULT_SETTINGS, domains: ['example.test'], unlockScope: 'all' });
+    expect(chrome.state.session).toEqual([]);
+  });
+
+  it('a rule made under the other scope opens nothing', () => {
+    const settings = { ...DEFAULT_SETTINGS, domains: DOMAINS, unlockScope: 'site' as const };
+    expect(openDomains({ scope: 'all', domains: DOMAINS }, settings)).toEqual([]);
+    expect(openDomains({ scope: null, domains: DOMAINS }, settings)).toEqual([]);
+    expect(openDomains({ scope: 'site', domains: ['second.test', 'gone.test'] }, settings)).toEqual(['second.test']);
+    expect(openDomains(null, settings)).toEqual([]);
+  });
+});
+
+describe('a lock tab goes back to its own site once that site is open (E3 follow-up)', () => {
+  beforeEach(forgetTrackedTabs);
+  const T = (n: number) => n.toString(16).padStart(32, '0');
+
+  async function lockTab(id: number, url: string, source: 'engine' | 'claimed' = 'claimed', tabId = id) {
+    await browser.storage.session.set({ [`lockTarget:${T(id)}`]: { url, tabId, source } });
+  }
+  function stubTabs() {
+    const update = vi.spyOn(browser.tabs, 'update').mockImplementation((async () => ({})) as never);
+    vi.spyOn(browser.tabs, 'query').mockImplementation((async () => []) as never);
+    vi.spyOn(browser.tabs, 'get').mockImplementation((async (id: number) => ({
+      id,
+      url: `${LOCK}#t=${T(id)}`,
+    })) as never);
+    return update;
+  }
+
+  it('on activation, a claimed lock tab whose site was unlocked elsewhere goes back, once', async () => {
+    const update = stubTabs();
+    await seedPassword();
+    await saveSettings({ domains: ['example.test'] });
+    await lockTab(13, 'http://www.example.test/c');
+    await onTabActivated({ tabId: 13 }); // still locked
+    expect(update).not.toHaveBeenCalled();
+    await handleMessage({ type: 'unlock', password: PW }, {});
+    await onTabActivated({ tabId: 13 });
+    expect(update.mock.calls).toEqual([[13, { url: 'http://www.example.test/c' }]]);
+    expect(await recordOf(T(13))).toBeUndefined();
+    await onTabActivated({ tabId: 13 });
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it('never for a target off the listed domains, another tab’s token or a claimed extensions page', async () => {
+    const update = stubTabs();
+    await seedPassword();
+    await saveSettings({ domains: ['example.test'] });
+    await lockTab(1, 'https://evil.test/');
+    await lockTab(2, 'http://example.test/', 'claimed', 99);
+    await lockTab(3, 'chrome://extensions/');
+    await handleMessage({ type: 'unlock', password: PW }, {});
+    for (const tabId of [1, 2, 3]) await onTabActivated({ tabId });
+    expect(update).not.toHaveBeenCalled();
+    // The extensions page only for a token the guard made, and only after an 'all' unlock.
+    await lockTab(4, 'chrome://extensions/', 'engine');
+    await onTabActivated({ tabId: 4 });
+    expect(update.mock.calls).toEqual([[4, { url: 'chrome://extensions/' }]]);
+  });
+
+  it("'site' scope: only a target whose domain is unlocked goes back", async () => {
+    const update = stubTabs();
+    await seedPassword();
+    await saveSettings({ domains: ['example.test', 'second.test'], unlockScope: 'site' });
+    await applySettings({ ...DEFAULT_SETTINGS, domains: ['example.test', 'second.test'], unlockScope: 'site' });
+    await lockTab(1, 'https://example.test/a', 'engine');
+    await lockTab(2, 'https://m.example.test/b');
+    await lockTab(3, 'https://second.test/c');
+    await lockTab(4, 'chrome://extensions/', 'engine');
+    await handleMessage({ type: 'unlock', password: PW, token: T(1) }, { tab: { id: 1 }, frameId: 0 });
+    update.mockClear();
+    for (const tabId of [2, 3, 4]) await onTabActivated({ tabId });
+    expect(update.mock.calls).toEqual([[2, { url: 'https://m.example.test/b' }]]);
+  });
+
+  it('a lock page that asks again (describeTarget, claimTarget) while its site is open goes back', async () => {
+    const update = stubTabs();
+    await seedPassword();
+    await saveSettings({ domains: ['example.test'] });
+    await lockTab(5, 'https://example.test/x');
+    await handleMessage({ type: 'unlock', password: PW }, {});
+    const described = await handleMessage({ type: 'describeTarget', token: T(5) }, { tab: { id: 5 }, frameId: 0 });
+    expect(described).toMatchObject({ ok: true, host: 'example.test' });
+    await vi.waitFor(() => expect(update).toHaveBeenCalledWith(5, { url: 'https://example.test/x' }));
+    const claimed = await handleMessage(
+      { type: 'claimTarget', raw: 'https://www.example.test/y' },
+      { tab: { id: 6 }, frameId: 0 },
+    );
+    expect(claimed).toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(update).toHaveBeenCalledWith(6, { url: 'https://www.example.test/y' }));
+  });
+
+  it('the tabs.onActivated listener is registered at start', async () => {
+    background.main();
+    const update = stubTabs();
+    await seedPassword();
+    await saveSettings({ domains: ['example.test'] });
+    await lockTab(7, 'https://example.test/z');
+    await handleMessage({ type: 'unlock', password: PW }, {});
+    await fakeBrowser.tabs.onActivated.trigger({ tabId: 7, windowId: 1 } as never);
+    await vi.waitFor(() => expect(update).toHaveBeenCalledWith(7, { url: 'https://example.test/z' }));
   });
 });

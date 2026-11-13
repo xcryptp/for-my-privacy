@@ -24,7 +24,7 @@
     "message": "Wrong password."
   },
   "tooManyAttempts": {
-    "message": "Too many attempts. Try again in $1."
+    "message": "Too many wrong tries. Try again in $1."
   },
   "unlockedNoReturn": {
     "message": "Unlocked. You can open your site again."
@@ -39,7 +39,7 @@
     "message": "Create a password"
   },
   "setupHint": {
-    "message": "Use at least 8 characters. It cannot be recovered; if you forget it, reinstall the extension."
+    "message": "Use at least 8 characters."
   },
   "confirmPasswordLabel": {
     "message": "Confirm password"
@@ -57,10 +57,10 @@
     "message": "Locked sites"
   },
   "domainsHint": {
-    "message": "Paste any address. The site and all of its subdomains are locked, such as *.example.com."
+    "message": "Paste any web address. The whole site is locked, including every address under it (like m.example.com)."
   },
   "addDomainPlaceholder": {
-    "message": "example.com or *.example.com"
+    "message": "example.com or a full address"
   },
   "addButton": {
     "message": "Add"
@@ -78,7 +78,7 @@
     "message": "Chrome did not allow access to this site, so it was not added."
   },
   "relatedSuggestion": {
-    "message": "Also lock $1?"
+    "message": "Also lock $1? (another address of the same service)"
   },
   "idleTitle": {
     "message": "Lock again automatically"
@@ -93,7 +93,7 @@
     "message": "Ask for the password before Chrome's extensions page opens"
   },
   "guardHint": {
-    "message": "Removing the extension from the toolbar menu cannot be blocked. See the README."
+    "message": "Removing the extension from the toolbar menu cannot be blocked."
   },
   "changePasswordTitle": {
     "message": "Change password"
@@ -153,7 +153,7 @@
     "message": "Source code on GitHub"
   },
   "willLock": {
-    "message": "Will lock $1 and all its subdomains."
+    "message": "Will lock $1 and every address under it (like m.$1)."
   },
   "onboardingProgress": {
     "message": "Step $1 of $2"
@@ -195,12 +195,96 @@
     "message": "Choose sites to lock"
   },
   "onboardingSitesHint": {
-    "message": "Pick the sites you want to lock now. Chrome asks once to allow access to them. You can change the list later."
+    "message": "Pick the sites you want to lock now. Chrome will then ask you to let this extension see those sites. That is needed to show the lock page instead of the site. Choose Allow. You can change the list later."
   },
   "onboardingCustomLabel": {
     "message": "Another site"
   },
   "onboardingDoneTip": {
-    "message": "All set. Your chosen sites are locked now. Open one in a new tab to see the lock page."
+    "message": "All set. Your chosen sites are locked now. Open one in a new tab to see the lock page. To lock again right away later, click this extension's icon in the toolbar."
+  },
+  "waitSeconds": {
+    "message": "$1 s"
+  },
+  "waitMinutes": {
+    "message": "$1 min"
+  },
+  "waitMinutesSeconds": {
+    "message": "$1 min $2 s"
+  },
+  "wrongPasswordTries": {
+    "message": "Wrong password. $1 tries left before a short wait."
+  },
+  "wrongPasswordLastTry": {
+    "message": "Wrong password. 1 try left before a short wait."
+  },
+  "forgotSummary": {
+    "message": "Forgot your password?"
+  },
+  "forgotBody": {
+    "message": "A forgotten password cannot be recovered. To start over, remove this extension: right-click its icon in the Chrome toolbar and choose \"Remove from Chrome\" (if you cannot see the icon, click the puzzle-piece icon first). This also erases the password and the list of locked sites. Then install the extension again."
+  },
+  "unlockHintAll": {
+    "message": "This unlocks all your locked sites."
+  },
+  "unlockHintSite": {
+    "message": "This unlocks only $1."
+  },
+  "unlockHintThisSite": {
+    "message": "This unlocks only this site."
+  },
+  "lockSettingsHint": {
+    "message": "Settings ask for the password again. Locked sites stay locked."
+  },
+  "settingsUnlockHint": {
+    "message": "This opens the settings only. Locked sites stay locked."
+  },
+  "permissionLostLockedBody": {
+    "message": "Unlock the settings, then open Sites to allow access again."
+  },
+  "setupWarningTitle": {
+    "message": "This password cannot be recovered."
+  },
+  "setupWarningBody": {
+    "message": "If you forget it, the only way back in is to remove the extension and install it again. That also erases your list of locked sites."
+  },
+  "onboardingDoneTipEmpty": {
+    "message": "All set. No sites are locked yet. Add one under Sites."
+  },
+  "onboardingSkipSetup": {
+    "message": "Skip setup and go to settings"
+  },
+  "willLockBroader": {
+    "message": "This locks all of $1, not only $2."
+  },
+  "domainAlsoLocks": {
+    "message": "and every address under it (like m.$1)"
+  },
+  "guardHintLink": {
+    "message": "See what it protects and what it does not."
+  },
+  "idleClamped": {
+    "message": "Changed to $1 min because the allowed range is 1 to 60 minutes."
+  },
+  "unlockScopeTitle": {
+    "message": "When I unlock a site"
+  },
+  "unlockScopeAll": {
+    "message": "Unlock all locked sites together"
+  },
+  "unlockScopeSite": {
+    "message": "Unlock only that site"
+  },
+  "popupOpenSettings": {
+    "message": "Open settings"
+  },
+  "popupLocked": {
+    "message": "Locked"
+  },
+  "popupShortcut": {
+    "message": "Shortcut: $1"
+  },
+  "popupNotSet": {
+    "message": "Finish the setup in Settings first."
   }
 }

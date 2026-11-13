@@ -1,20 +1,25 @@
 import { browser } from 'wxt/browser';
-import { normalizeDomain, suggestRelated } from '../../src/lib/domain';
+import { suggestRelated } from '../../src/lib/domain';
 import { SETTINGS_GUARD_BUILD } from '../../src/lib/flags';
 import { applyI18n, t } from '../../src/lib/i18n';
 import { send, type ErrorCode, type State } from '../../src/lib/messages';
 import { originPatterns, releasableOrigins } from '../../src/lib/origins';
 import { validatePassword } from '../../src/lib/password';
-import { DEFAULT_SETTINGS, getSettings, saveSettings, type Settings } from '../../src/lib/settings';
+import { normalizeDomain } from '../../src/lib/registrable-domain';
+import { DEFAULT_SETTINGS, getSettings, type Settings } from '../../src/lib/settings';
+import { saveSettingsFromInput as saveSettings } from '../../src/lib/settings-input';
 import { createCountdown } from '../../src/ui/countdown';
 import {
-  LEARN_MORE_URL,
   ONBOARDING_KEY,
   ONBOARDING_STEPS,
   PRESET_SITES,
   PRIVACY_URL,
   REPO_URL,
   addCustomSite,
+  commitTypedSite,
+  doneTipKey,
+  limitsUrl,
+  nextLabelKey,
   nextStep,
   parseProgress,
   prevStep,
@@ -22,11 +27,11 @@ import {
   resumeStep,
   selectedOrigins,
   toggleSite,
-  wildcardForms,
+  wildcardForm,
   type OnboardingProgress,
   type Step,
 } from './onboarding';
-import { sectionFromHash, type Section } from './sections';
+import { focusAfterRemove, idleWasClamped, sectionFromHash, type Section } from './sections';
 
 type View = 'setup' | 'locked' | 'settings';
 
@@ -98,6 +103,7 @@ function init(): void {
   const obScreenLock = byId<HTMLInputElement>('ob-screen-lock');
   const obFinish = byId<HTMLButtonElement>('finish');
   const obFinishError = byId('ob-finish-error');
+  const obSkipSetup = byId<HTMLButtonElement>('ob-skip-setup');
 
   // unlock
   const unlockForm = byId<HTMLFormElement>('unlock-form');
@@ -105,6 +111,7 @@ function init(): void {
   const unlockSubmit = byId<HTMLButtonElement>('unlock-submit');
   const unlockError = byId('unlock-error');
   const unlockWait = createCountdown(unlockError, unlockSubmit, unlockPassword);
+  const lockedNotice = byId('locked-notice');
 
   // sites
   const addForm = byId<HTMLFormElement>('add-form');
@@ -133,6 +140,8 @@ function init(): void {
   const screenLock = byId<HTMLInputElement>('screen-lock');
   const guard = byId<HTMLInputElement>('guard');
   const guardRow = byId('guard-row');
+  const scopeAll = byId<HTMLInputElement>('scope-all');
+  const scopeSite = byId<HTMLInputElement>('scope-site');
 
   // change password
   const changeForm = byId<HTMLFormElement>('change-form');
@@ -160,11 +169,16 @@ function init(): void {
   let chips: string[] = [...PRESET_SITES];
   let chosen: string[] = [];
   let savedByOnboarding: string[] = [];
-  let pendingTip = false;
+  let pendingTip: ReturnType<typeof doneTipKey> | null = null;
+  // True when the steps were picked up again after a reload: then a way out to the settings is offered.
+  let resumed = false;
 
   applyI18n();
-  byId<HTMLAnchorElement>('learn-more').href = LEARN_MORE_URL;
-  byId<HTMLAnchorElement>('link-limits').href = LEARN_MORE_URL;
+  // The README in the language of the page, at its own "what it protects" section.
+  const limits = limitsUrl(browser.i18n.getUILanguage());
+  byId<HTMLAnchorElement>('learn-more').href = limits;
+  byId<HTMLAnchorElement>('link-limits').href = limits;
+  byId<HTMLAnchorElement>('guard-more').href = limits;
   byId<HTMLAnchorElement>('link-privacy').href = PRIVACY_URL;
   byId<HTMLAnchorElement>('link-repo').href = REPO_URL;
   byId('about-version').textContent = t('aboutVersion', browser.runtime.getManifest().version);
@@ -184,6 +198,11 @@ function init(): void {
     };
     if (document.hidden) show();
     else requestAnimationFrame(show);
+  }
+
+  function clearToast(): void {
+    clearTimeout(toastTimer);
+    toast.textContent = '';
   }
 
   /** Shows a worker rejection on a password form: a countdown while a wait runs, else the message. */
@@ -254,6 +273,7 @@ function init(): void {
       setupForm.hidden = passwordCreated;
       setupDone.hidden = !passwordCreated;
     }
+    obSkipSetup.hidden = !(resumed && next >= 3);
     stepHeadings[next].focus();
     saveProgress();
   }
@@ -261,6 +281,7 @@ function init(): void {
   /** Picks the steps up again after a reload: the password exists, the sites saved so far are chosen. */
   function resumeOnboarding(progress: OnboardingProgress): void {
     resetOnboarding();
+    resumed = true;
     passwordCreated = true;
     savedByOnboarding = [...progress.sites];
     chosen = [...progress.sites];
@@ -273,6 +294,7 @@ function init(): void {
   /** Back to a clean first run: used whenever the screen is decided afresh as "no password yet". */
   function resetOnboarding(): void {
     passwordCreated = false;
+    resumed = false;
     chips = [...PRESET_SITES];
     chosen = [];
     savedByOnboarding = [];
@@ -280,6 +302,9 @@ function init(): void {
     setupConfirm.value = '';
     for (const el of [setupError, obSiteError, obFinishError]) el.textContent = '';
     obDomain.value = '';
+    // The "Will lock ..." line holds a site name: nothing of it may stay in hidden markup.
+    obPreview.textContent = '';
+    obPreview.classList.remove('invalid');
     obIdle.value = String(DEFAULT_SETTINGS.idleMinutes);
     obScreenLock.checked = DEFAULT_SETTINGS.lockOnScreenLock;
     renderChips();
@@ -304,9 +329,9 @@ function init(): void {
     updateNextLabel();
   }
 
-  /** "Skip" while no site is chosen, "Next" once one is. */
+  /** "Skip" while no site is chosen or typed, "Next" once one is. */
   function updateNextLabel(): void {
-    obNext.textContent = t(chosen.length === 0 ? 'skipButton' : 'nextButton');
+    obNext.textContent = t(nextLabelKey(chosen.length, obDomain.value));
   }
 
   /** The live line under a site field: what the text will lock, or that it is not a site. */
@@ -314,7 +339,13 @@ function init(): void {
     const preview = previewFor(raw);
     el.classList.toggle('invalid', preview.kind === 'invalid');
     el.textContent =
-      preview.kind === 'ok' ? t('willLock', preview.domain) : preview.kind === 'invalid' ? t('invalidDomain') : '';
+      preview.kind === 'ok'
+        ? preview.typed
+          ? t('willLockBroader', [preview.domain, preview.typed])
+          : t('willLock', preview.domain)
+        : preview.kind === 'invalid'
+          ? t('invalidDomain')
+          : '';
   }
 
   /** Leaves nothing of the settings behind once locked: no site names, no typed passwords. */
@@ -324,8 +355,11 @@ function init(): void {
     domainList.replaceChildren();
     related.replaceChildren();
     banner.hidden = true;
+    lockedNotice.hidden = true;
     tip.textContent = '';
+    clearToast();
     domainPreview.textContent = '';
+    domainPreview.classList.remove('invalid');
     for (const input of [current, next, confirm, domainInput]) input.value = '';
     changeWait.stop();
     changeSubmit.disabled = false;
@@ -338,7 +372,12 @@ function init(): void {
     // Mid-onboarding the worker already grants the settings; the steps run until Finish.
     if (wanted === 'settings' && view === 'setup' && passwordCreated) return;
     const myEpoch = ++epoch;
-    if (wanted === view) return; // locked or setup again: only cancels work still in flight
+    if (wanted === view) {
+      // Locked or setup again: only cancels work still in flight. An open locked page also picks up
+      // a wait that started elsewhere (wrong guesses on a lock page) without a submit.
+      if (wanted === 'locked') syncUnlockWait(state.waitMs);
+      return;
+    }
     const previous = view;
     if (wanted === 'settings') {
       // A reload during the first run resumes it; Finish removes the record.
@@ -351,13 +390,14 @@ function init(): void {
       if (!(await renderSettings(myEpoch))) return; // a newer state replaced this one
     } else {
       clearSettingsView();
-      pendingTip = false;
+      pendingTip = null;
       if (wanted === 'locked') passwordCreated = false; // a relock ends a half-done onboarding
     }
     // Nothing of the first run (site names in the chips) stays in the page outside its steps.
     if (wanted !== 'setup') resetOnboarding();
     showView(wanted);
     if (wanted === 'locked') {
+      renderLockedNotice();
       unlockPassword.value = '';
       unlockError.textContent = '';
       if (state.waitMs > 0) unlockWait.start(state.waitMs);
@@ -373,14 +413,29 @@ function init(): void {
     } else {
       const section = sectionFromHash(location.hash);
       showSection(section, false);
-      if (pendingTip) tip.textContent = t('onboardingDoneTip');
-      pendingTip = false;
-      if (previous !== undefined) {
+      if (pendingTip) tip.textContent = t(pendingTip);
+      pendingTip = null;
+      if (location.hash === '#permission-lost' && !banner.hidden) {
+        // The link of the worker's notice leads here: the notice is what the person came for.
+        banner.focus();
+      } else if (previous !== undefined) {
         // Just unlocked or finished the first run: the first control of the section.
         if (section === 'sites') domainInput.focus();
         else sectionHeadings[section].focus();
       }
     }
+  }
+
+  /** Starts the countdown on a locked page that did not submit anything itself. */
+  function syncUnlockWait(waitMs: number): void {
+    // Under a second left the local countdown is about to end by itself.
+    if (unlocking || unlockWait.active || waitMs < 1000) return;
+    unlockWait.start(waitMs);
+  }
+
+  /** The "site access was removed" notice above the password form; it names no site. */
+  function renderLockedNotice(): void {
+    lockedNotice.hidden = location.hash !== '#permission-lost';
   }
 
   async function refreshState(): Promise<void> {
@@ -402,11 +457,22 @@ function init(): void {
     idle.value = String(loaded.idleMinutes);
     screenLock.checked = loaded.lockOnScreenLock;
     guard.checked = loaded.settingsGuard;
+    showScope(loaded.unlockScope);
     return renderBanner(forEpoch);
   }
 
-  function renderDomains(): void {
+  /**
+   * Draws the list and the suggestions. `afterRemove` is the index of the row just removed: the focus
+   * goes to the button that took its place. Otherwise a focus that sat inside the list or the
+   * suggestions stays near where it was, because redrawing replaces the buttons.
+   */
+  function renderDomains(afterRemove?: number): void {
     const domains = settings?.domains ?? [];
+    const rowButtons = () => [...domainList.querySelectorAll<HTMLButtonElement>('button')];
+    const active = document.activeElement;
+    const keptRow = active && domainList.contains(active) ? rowButtons().indexOf(active as HTMLButtonElement) : -1;
+    const keptChip = active !== null && related.contains(active);
+
     domainList.replaceChildren(
       ...domains.map((domain) => {
         const li = document.createElement('li');
@@ -417,7 +483,12 @@ function init(): void {
         name.textContent = domain;
         const wild = document.createElement('span');
         wild.className = 'wild';
-        wild.textContent = wildcardForms(domain);
+        const plain = document.createElement('span');
+        plain.textContent = t('domainAlsoLocks', domain);
+        const form = document.createElement('span');
+        form.className = 'wild-form';
+        form.textContent = wildcardForm(domain);
+        wild.append(plain, ' ', form);
         site.append(name, wild);
         const remove = document.createElement('button');
         remove.type = 'button';
@@ -446,6 +517,17 @@ function init(): void {
         return chip;
       }),
     );
+
+    const buttons = rowButtons();
+    const row =
+      afterRemove !== undefined
+        ? focusAfterRemove(afterRemove, domains.length)
+        : keptRow >= 0
+          ? focusAfterRemove(keptRow, domains.length)
+          : undefined;
+    if (row === null) domainInput.focus();
+    else if (row !== undefined) buttons[row]?.focus();
+    else if (keptChip) domainInput.focus(); // the suggestion that was pressed is gone
   }
 
   /** Shows the "site access was removed" notice while a listed site has no host access. */
@@ -466,7 +548,7 @@ function init(): void {
     missingOrigins = missing;
     const wasHidden = banner.hidden;
     banner.hidden = missing.length === 0;
-    if (wasHidden && !banner.hidden && location.hash === '#permission-lost') banner.scrollIntoView();
+    if (wasHidden && !banner.hidden && location.hash === '#permission-lost' && view === 'settings') banner.focus();
     return true;
   }
 
@@ -504,6 +586,7 @@ function init(): void {
       domainError.textContent = '';
       domainInput.value = '';
       renderPreview(domainPreview, '');
+      tip.textContent = ''; // the first-run tip is about the first run, not this change
       renderDomains();
       showToast(t('saved'));
       await renderBanner(startEpoch);
@@ -516,6 +599,7 @@ function init(): void {
 
   async function removeDomain(domain: string): Promise<void> {
     const startEpoch = epoch;
+    const index = settings?.domains.indexOf(domain) ?? -1;
     try {
       const stored = await getSettings();
       if (startEpoch !== epoch) return;
@@ -524,7 +608,8 @@ function init(): void {
       const origins = releasableOrigins(domain, saved.domains);
       if (startEpoch === epoch) {
         settings = saved;
-        renderDomains();
+        tip.textContent = '';
+        renderDomains(Math.max(index, 0));
         showToast(t('saved'));
       }
       // Give the host access back too (best effort). The worker only reports lost access for a
@@ -536,7 +621,13 @@ function init(): void {
     }
   }
 
-  async function saveField(patch: Partial<Settings>): Promise<void> {
+  function showScope(scope: Settings['unlockScope']): void {
+    scopeAll.checked = scope === 'all';
+    scopeSite.checked = scope === 'site';
+  }
+
+  /** Saves one field; `message` tells the toast what happened (default "Saved."). */
+  async function saveField(patch: Partial<Settings>, message?: (saved: Settings) => string): Promise<void> {
     const startEpoch = epoch;
     try {
       const saved = await saveSettings(patch);
@@ -545,7 +636,8 @@ function init(): void {
       idle.value = String(saved.idleMinutes);
       screenLock.checked = saved.lockOnScreenLock;
       guard.checked = saved.settingsGuard;
-      showToast(t('saved'));
+      showScope(saved.unlockScope);
+      showToast(message ? message(saved) : t('saved'));
     } catch (err) {
       console.warn('save failed', err);
     }
@@ -645,10 +737,27 @@ function init(): void {
     renderPreview(obPreview, '');
     renderChips();
   });
-  obDomain.addEventListener('input', () => renderPreview(obPreview, obDomain.value));
+  obDomain.addEventListener('input', () => {
+    renderPreview(obPreview, obDomain.value);
+    updateNextLabel();
+  });
 
   obNext.addEventListener('click', () => {
     obSiteError.textContent = '';
+    // A site typed but not added counts as added: the same check as the Add button.
+    const typed = commitTypedSite(chips, chosen, obDomain.value);
+    if (typed.kind === 'invalid') {
+      obSiteError.textContent = t('invalidDomain');
+      obDomain.focus();
+      return;
+    }
+    if (typed.kind === 'added') {
+      chips = typed.chips;
+      chosen = typed.selected;
+      obDomain.value = '';
+      renderPreview(obPreview, '');
+      renderChips();
+    }
     const sites = [...chosen];
     // One request for every chosen site, started right here: Chrome needs the user gesture of this click.
     const request = sites.length > 0 ? browser.permissions.request({ origins: selectedOrigins(sites) }) : undefined;
@@ -682,6 +791,15 @@ function init(): void {
     }
   }
 
+  /** Ends the first run: the next state check shows the settings (or the unlock form if it locked). */
+  async function leaveOnboarding(): Promise<void> {
+    passwordCreated = false;
+    // Only a site that was really saved makes "your sites are locked" true.
+    pendingTip = doneTipKey(savedByOnboarding.length);
+    await browser.storage.local.remove(ONBOARDING_KEY);
+    await refreshState();
+  }
+
   obFinish.addEventListener('click', () => {
     void (async () => {
       const startEpoch = epoch;
@@ -695,11 +813,7 @@ function init(): void {
           lockOnScreenLock: obScreenLock.checked,
         });
         if (startEpoch !== epoch) return;
-        // Leave the steps: the next state check shows the settings (or the unlock form if it locked).
-        passwordCreated = false;
-        pendingTip = true;
-        await browser.storage.local.remove(ONBOARDING_KEY);
-        await refreshState();
+        await leaveOnboarding();
       } catch (err) {
         console.warn('finish failed', err);
       } finally {
@@ -708,11 +822,17 @@ function init(): void {
     })();
   });
 
+  obSkipSetup.addEventListener('click', () => {
+    void leaveOnboarding().catch((err) => console.warn('skip setup failed', err));
+  });
+
   domainInput.addEventListener('input', () => renderPreview(domainPreview, domainInput.value));
 
   window.addEventListener('hashchange', () => {
+    if (view === 'locked') renderLockedNotice();
     if (view !== 'settings') return;
     tip.textContent = ''; // the first-run tip belongs to the screen that showed it
+    clearToast(); // so does a "Saved." of the section that was left
     showSection(sectionFromHash(location.hash), true);
   });
 
@@ -736,11 +856,19 @@ function init(): void {
       idle.value = String(settings?.idleMinutes ?? '');
       return;
     }
-    // saveSettings rounds and clamps to 1-60; the field then shows what was stored.
-    void saveField({ idleMinutes: minutes });
+    // saveSettings rounds and clamps to 1-60; the field then shows what was stored, and the toast
+    // says so when the value was changed.
+    void saveField({ idleMinutes: minutes }, (saved) =>
+      idleWasClamped(minutes, saved.idleMinutes) ? t('idleClamped', String(saved.idleMinutes)) : t('saved'),
+    );
   });
   screenLock.addEventListener('change', () => void saveField({ lockOnScreenLock: screenLock.checked }));
   guard.addEventListener('change', () => void saveField({ settingsGuard: guard.checked }));
+  for (const radio of [scopeAll, scopeSite]) {
+    radio.addEventListener('change', () => {
+      if (radio.checked) void saveField({ unlockScope: radio.value === 'site' ? 'site' : 'all' });
+    });
+  }
 
   let changing = false;
   changeForm.addEventListener('submit', (event) => {

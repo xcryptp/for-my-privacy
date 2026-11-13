@@ -4,6 +4,7 @@ import { test, expect } from './fixtures';
 type Api = {
   handleMessage: (req: unknown, sender: unknown) => Promise<unknown>;
   saveSettings: (patch: unknown) => Promise<unknown>;
+  getSettings: () => Promise<{ unlockScope: string }>;
 };
 
 const PW = 'correct horse';
@@ -11,12 +12,12 @@ const PW = 'correct horse';
 // The browser UI language decides which locale chrome.i18n serves, and it differs between
 // machines, so every expected text is looked up from the extension's own messages.
 declare const chrome: typeof import('wxt/browser').browser;
-const msg = (sw: Worker, key: string, subs?: string) =>
+const msg = (sw: Worker, key: string, subs?: string | string[]) =>
   sw.evaluate(([k, s]) => chrome.i18n.getMessage(k as never, s), [key, subs] as const) as Promise<string>;
 
 /** Controls and expected texts of the options page, in the browser's language. */
 async function optionsUi(page: Page, sw: Worker) {
-  const text = (key: string, subs?: string) => msg(sw, key, subs);
+  const text = (key: string, subs?: string | string[]) => msg(sw, key, subs);
   const keys = [
     'passwordLabel',
     'confirmPasswordLabel',
@@ -73,12 +74,31 @@ async function optionsUi(page: Page, sw: Worker) {
   };
 }
 
+/** The README section for the browser's language: README.ko.md and README.ja.md have their own anchors. */
+const limitsHref = (sw: Worker) =>
+  sw.evaluate(() => {
+    const lang = chrome.i18n.getUILanguage().toLowerCase().split(/[-_]/)[0];
+    const repo = 'https://github.com/xcryptp/for-my-privacy';
+    if (lang === 'ko') return `${repo}/blob/main/README.ko.md#${encodeURI('무엇을-막고-무엇은-막지-못하나')}`;
+    if (lang === 'ja') return `${repo}/blob/main/README.ja.md#${encodeURI('何を守り何を守れないか')}`;
+    return `${repo}#what-it-protects-and-what-it-does-not`;
+  });
+
 async function openOptions(page: Page, sw: Worker, extensionId: string, hash = '') {
   await page.goto(`chrome-extension://${extensionId}/options.html${hash}`);
   return optionsUi(page, sw);
 }
 
 type Ui = Awaited<ReturnType<typeof optionsUi>>;
+
+/** The "too many attempts" message with a wait of any of the given seconds (a second or two may pass). */
+async function waitingText(ui: Ui, seconds: number[]): Promise<RegExp> {
+  const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const options = await Promise.all(
+    seconds.map(async (n) => escape(await ui.text('tooManyAttempts', await ui.text('waitSeconds', String(n))))),
+  );
+  return new RegExp(`^(${options.join('|')})$`);
+}
 
 /** Steps 1 and 2: the welcome step, then the password. Leaves the page on step 3. */
 async function createPassword(ui: Ui) {
@@ -115,10 +135,7 @@ test('first run opens the welcome step with progress 1/4, focus on its heading a
   await expect(ui.progress).toHaveText('1/4');
   await expect(ui.back).toBeHidden();
   const learn = page.getByRole('link', { name: await ui.text('onboardingLearnMore') });
-  await expect(learn).toHaveAttribute(
-    'href',
-    'https://github.com/xcryptp/for-my-privacy#what-it-protects-and-what-it-does-not',
-  );
+  await expect(learn).toHaveAttribute('href', await limitsHref(sw));
 });
 
 test('onboarding happy path: four steps end on the settings, and the chosen site is locked in a new tab', async ({
@@ -167,7 +184,7 @@ test('onboarding happy path: four steps end on the settings, and the chosen site
   // The settings being open does not unlock the site.
   const site = await context.newPage();
   await site.goto(origin('www.example.test')).catch(() => {});
-  await expect.poll(() => site.url()).toContain(`chrome-extension://${extensionId}/lock.html#u=`);
+  await expect.poll(() => site.url()).toMatch(new RegExp(`^chrome-extension://${extensionId}/lock\\.html#[ut]=`));
 });
 
 test('Back works from step 2 and step 3; step 2 shows the password as done afterwards', async ({
@@ -272,7 +289,8 @@ test('an invalid custom site on step 3 shows the message and is not added', asyn
   await expect(page.locator('#ob-preview')).toHaveText(await ui.text('invalidDomain'));
   await ui.siteField.press('Enter');
   await expect(ui.siteError).toHaveText(await ui.text('invalidDomain'));
-  await expect(ui.skip).toBeVisible();
+  // The text is still in the field, so the button reads Next, not Skip.
+  await expect(ui.nextStep).toBeVisible();
 });
 
 test('the settings unlock keeps the sites locked: unlock, add a site, a new tab still shows the lock page', async ({
@@ -296,7 +314,7 @@ test('the settings unlock keeps the sites locked: unlock, add a site, a new tab 
 
   const site = await context.newPage();
   await site.goto(origin('example.test')).catch(() => {});
-  await expect.poll(() => site.url()).toContain(`chrome-extension://${extensionId}/lock.html#u=`);
+  await expect.poll(() => site.url()).toMatch(new RegExp(`^chrome-extension://${extensionId}/lock\\.html#[ut]=`));
 });
 
 test('unlocking the sites on the lock page does not open the settings', async ({
@@ -313,7 +331,7 @@ test('unlocking the sites on the lock page does not open the settings', async ({
 
   const site = await context.newPage();
   await site.goto(origin('example.test')).catch(() => {});
-  await expect.poll(() => site.url()).toContain('lock.html#u=');
+  await expect.poll(() => site.url()).toMatch(/lock\.html#[ut]=/);
   await site.locator('#password').fill(PW);
   await site.locator('#submit').click();
   await expect.poll(() => site.url()).toContain('example.test');
@@ -338,7 +356,8 @@ test('adding a site lists it with its wildcard forms and, after Lock now, its su
   await expect(page.locator('#domain-preview')).toHaveText(await ui.text('willLock', 'example.test'));
   await ui.add.click();
   await expect(ui.list.getByText('example.test', { exact: true })).toBeVisible();
-  await expect(ui.list.getByText('*.example.test · *.*.example.test', { exact: true })).toBeVisible();
+  await expect(ui.list.getByText(await ui.text('domainAlsoLocks', 'example.test'), { exact: true })).toBeVisible();
+  await expect(ui.list.getByText('*.example.test', { exact: true })).toBeVisible();
   await expect(ui.toast).toHaveText(await ui.text('saved'));
   await expect(ui.domainField).toHaveValue('');
 
@@ -347,7 +366,7 @@ test('adding a site lists it with its wildcard forms and, after Lock now, its su
 
   const site = await context.newPage();
   await site.goto(origin('www.example.test')).catch(() => {});
-  await expect.poll(() => site.url()).toContain(`chrome-extension://${extensionId}/lock.html#u=`);
+  await expect.poll(() => site.url()).toMatch(new RegExp(`^chrome-extension://${extensionId}/lock\\.html#[ut]=`));
 });
 
 test('an input that is not a domain shows the invalid message and is not added', async ({
@@ -396,7 +415,7 @@ test('a pasted URL with a subdomain is stored as its registrable domain and lock
 
   const site = await context.newPage();
   await site.goto(origin('a.b.example.test')).catch(() => {});
-  await expect.poll(() => site.url()).toContain(`chrome-extension://${extensionId}/lock.html#u=`);
+  await expect.poll(() => site.url()).toMatch(new RegExp(`^chrome-extension://${extensionId}/lock\\.html#[ut]=`));
 });
 
 test('the menu opens one section at a time, by click and by hash, and moves focus to its heading', async ({
@@ -453,7 +472,7 @@ test('idle minutes 0 is saved as 1', async ({ context, sw, extensionId }) => {
   await ui.idle.fill('0');
   await ui.idle.press('Enter');
   await expect(ui.idle).toHaveValue('1');
-  await expect(ui.toast).toHaveText(await ui.text('saved'));
+  await expect(ui.toast).toHaveText(await ui.text('idleClamped', '1'));
   await page.reload();
   await expect(ui.idle).toHaveValue('1');
 });
@@ -606,8 +625,7 @@ test('a wrong password on the unlock form shows the error, five show a countdown
     await ui.password.press('Enter');
     await expect(ui.unlockError).not.toBeEmpty();
   }
-  const template = (await ui.text('tooManyAttempts', 'M:SS')).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  await expect(ui.unlockError).toHaveText(new RegExp(`^${template.replace('M:SS', '0:(30|29|28)')}$`));
+  await expect(ui.unlockError).toHaveText(await waitingText(ui, [30, 29, 28]));
   await expect(ui.unlock).toBeDisabled();
 });
 
@@ -637,4 +655,316 @@ test('the banner is absent when every listed site has access', async ({ context,
   await completeOnboarding(ui, 'example.test');
   await expect(ui.list.locator('li')).toHaveCount(1);
   await expect(await ui.heading('permissionLostTitle')).toBeHidden();
+});
+
+test('Skip then Finish says no site is locked yet instead of claiming it', async ({ context, sw, extensionId }) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  await completeOnboarding(ui);
+  await expect(ui.tip).toHaveText(await ui.text('onboardingDoneTipEmpty'));
+  await expect(page.getByText(await ui.text('onboardingDoneTip'), { exact: true })).toHaveCount(0);
+});
+
+test('a site typed but not added is added when Next is pressed, and the button never reads Skip meanwhile', async ({
+  context,
+  sw,
+  extensionId,
+}) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  await createPassword(ui);
+  await expect(ui.skip).toBeVisible();
+  await ui.siteField.fill('example.test');
+  await expect(ui.nextStep).toBeVisible();
+  await ui.nextStep.click();
+  await expect(ui.progress).toHaveText('4/4');
+  await ui.finish.click();
+  await expect(ui.list.getByText('example.test', { exact: true })).toBeVisible();
+  await expect(ui.tip).toHaveText(await ui.text('onboardingDoneTip'));
+});
+
+test('a typed text that is not a site keeps the person on step 3 with the message', async ({ context, sw, extensionId }) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  await createPassword(ui);
+  await ui.siteField.fill('not a domain');
+  await ui.nextStep.click();
+  await expect(ui.siteError).toHaveText(await ui.text('invalidDomain'));
+  await expect(ui.progress).toHaveText('3/4');
+  await expect(ui.siteField).toBeFocused();
+});
+
+test('the no-recovery warning is a visible warning box that says the site list is erased too', async ({
+  context,
+  sw,
+  extensionId,
+}) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  await ui.start.click();
+  const box = page.locator('#setup-warning');
+  await expect(box).toBeVisible();
+  await expect(box).toContainText(await ui.text('setupWarningTitle'));
+  await expect(box).toContainText(await ui.text('setupWarningBody'));
+  const style = await box.evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { border: s.borderTopWidth, bg: s.backgroundColor };
+  });
+  expect(style.border).not.toBe('0px');
+  expect(style.bg).not.toBe('rgba(0, 0, 0, 0)');
+});
+
+test('each step heading announces "Step N of 4" as its description', async ({ context, sw, extensionId }) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  await expect(await ui.heading('onboardingWelcomeTitle')).toHaveAccessibleDescription(
+    await ui.text('onboardingProgress', ['1', '4']),
+  );
+  await ui.start.click();
+  await expect(await ui.heading('setupTitle')).toHaveAccessibleDescription(await ui.text('onboardingProgress', ['2', '4']));
+  await ui.password.fill(PW);
+  await ui.confirm.fill(PW);
+  await ui.create.click();
+  await expect(await ui.heading('onboardingSitesTitle')).toHaveAccessibleDescription(
+    await ui.text('onboardingProgress', ['3', '4']),
+  );
+});
+
+test('a resumed onboarding offers to skip the setup and go to the settings; a fresh one does not', async ({
+  context,
+  sw,
+  extensionId,
+}) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  const skipSetup = page.getByRole('button', { name: await ui.text('onboardingSkipSetup') });
+  await createPassword(ui);
+  await expect(skipSetup).toBeHidden();
+  await page.reload();
+  await expect(ui.progress).toHaveText('3/4');
+  await expect(skipSetup).toBeVisible();
+  await skipSetup.click();
+  await expect(ui.lockNow).toBeVisible();
+  await expect(ui.tip).toHaveText(await ui.text('onboardingDoneTipEmpty'));
+  await page.reload();
+  await expect(ui.lockNow).toBeVisible();
+  await expect(ui.progress).toBeHidden();
+});
+
+test('a relock mid-onboarding leaves no site name in the page, hidden or not', async ({ context, sw, extensionId }) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  await createPassword(ui);
+  await ui.siteField.fill('secretsite.test');
+  await expect(page.locator('#ob-preview')).toContainText('secretsite.test');
+  // The worker locks (idle, Lock now elsewhere); the page notices on its next state check.
+  await sw.evaluate(() =>
+    (globalThis as unknown as { __fmp: Api }).__fmp.handleMessage({ type: 'lockNow' }, {}),
+  );
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(ui.unlock).toBeVisible();
+  const leaked = await page.evaluate(() => ({
+    text: document.documentElement.textContent ?? '',
+    fields: [...document.querySelectorAll('input')].map((el) => el.value),
+    preview: document.getElementById('ob-preview')?.textContent ?? '',
+  }));
+  expect(leaked.text).not.toContain('secretsite');
+  expect(leaked.fields.join('|')).not.toContain('secretsite');
+  expect(leaked.preview).toBe('');
+});
+
+test('the settings unlock says it opens the settings only and that locked sites stay locked', async ({
+  context,
+  sw,
+  extensionId,
+}) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  await completeOnboarding(ui);
+  await ui.lockNow.click();
+  await expect(ui.unlock).toBeVisible();
+  await expect(page.getByText(await ui.text('settingsUnlockHint'), { exact: true })).toBeVisible();
+});
+
+test('an already open locked settings tab shows the lock-out wait without a submit', async ({
+  context,
+  sw,
+  extensionId,
+}) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  await completeOnboarding(ui);
+  await ui.lockNow.click();
+  await expect(ui.unlock).toBeVisible();
+  await expect(ui.unlock).toBeEnabled();
+  // Five wrong answers somewhere else (a lock page).
+  await sw.evaluate(async () => {
+    const worker = (globalThis as unknown as { __fmp: Api }).__fmp;
+    for (let i = 0; i < 5; i++) await worker.handleMessage({ type: 'unlock', password: `wrong ${i}` }, {});
+  });
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(ui.unlockError).toHaveText(await waitingText(ui, [30, 29, 28, 27]));
+  await expect(ui.unlock).toBeDisabled();
+});
+
+test('#permission-lost on locked settings shows the notice above the form, with no site name', async ({
+  context,
+  sw,
+  extensionId,
+}) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  await completeOnboarding(ui, 'example.test');
+  await ui.lockNow.click();
+  await expect(ui.unlock).toBeVisible();
+  await page.goto(`chrome-extension://${extensionId}/options.html#permission-lost`);
+  const notice = page.locator('#locked-notice');
+  await expect(notice).toBeVisible();
+  await expect(await ui.heading('permissionLostTitle')).toBeVisible();
+  await expect(page.getByText('example.test')).toHaveCount(0);
+  const above = await page.evaluate(
+    () => document.getElementById('locked-notice')!.getBoundingClientRect().bottom <= document.getElementById('unlock-form')!.getBoundingClientRect().top,
+  );
+  expect(above).toBe(true);
+  // Without the hash there is no notice.
+  await page.goto(`chrome-extension://${extensionId}/options.html`);
+  await expect(ui.unlock).toBeVisible();
+  await expect(notice).toBeHidden();
+});
+
+test('the permission notice takes the focus when #permission-lost opens Sites', async ({ context, sw, extensionId }) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  await completeOnboarding(ui);
+  await sw.evaluate(() =>
+    (globalThis as unknown as { __fmp: Api }).__fmp.saveSettings({ domains: ['noperm.test'] }),
+  );
+  await page.goto(`chrome-extension://${extensionId}/options.html#permission-lost`);
+  await page.reload();
+  await expect(page.locator('#permission-lost')).toBeFocused();
+});
+
+test('after Remove the focus goes to the next row, then the field when the list is empty', async ({
+  context,
+  sw,
+  extensionId,
+}) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  await completeOnboarding(ui);
+  // The e2e build has no host access for other.test, so the list is filled through the worker.
+  await sw.evaluate(() =>
+    (globalThis as unknown as { __fmp: Api }).__fmp.saveSettings({ domains: ['example.test', 'other.test'] }),
+  );
+  await expect(ui.list.locator('li')).toHaveCount(2);
+  const removeFirst = page.getByRole('button', { name: `${await ui.text('removeButton')}: example.test` });
+  await removeFirst.click();
+  await expect(ui.list.locator('li')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: `${await ui.text('removeButton')}: other.test` })).toBeFocused();
+  // The redraw after the storage change keeps the focus there.
+  await page.waitForTimeout(500);
+  await expect(page.getByRole('button', { name: `${await ui.text('removeButton')}: other.test` })).toBeFocused();
+  await page.getByRole('button', { name: `${await ui.text('removeButton')}: other.test` }).click();
+  await expect(ui.list.locator('li')).toHaveCount(0);
+  await expect(ui.domainField).toBeFocused();
+});
+
+test('locking clears the "Saved." toast, and so does moving to another section', async ({ context, sw, extensionId }) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  await completeOnboarding(ui);
+  await (await ui.menuLink('menuAutolock')).click();
+  await ui.idle.fill('9');
+  await ui.idle.press('Enter');
+  await expect(ui.toast).toHaveText(await ui.text('saved'));
+  await (await ui.menuLink('menuSecurity')).click();
+  await expect(ui.toast).toHaveText('');
+  await (await ui.menuLink('menuAutolock')).click();
+  await ui.idle.fill('8');
+  await ui.idle.press('Enter');
+  await expect(ui.toast).toHaveText(await ui.text('saved'));
+  await ui.lockNow.click();
+  await expect(ui.unlock).toBeVisible();
+  await expect(ui.toast).toHaveText('');
+});
+
+test('a clamped auto-lock value is said out loud', async ({ context, sw, extensionId }) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  await completeOnboarding(ui);
+  await (await ui.menuLink('menuAutolock')).click();
+  await ui.idle.fill('90');
+  await ui.idle.press('Enter');
+  await expect(ui.idle).toHaveValue('60');
+  await expect(ui.toast).toHaveText(await ui.text('idleClamped', '60'));
+  await ui.idle.fill('0');
+  await ui.idle.press('Enter');
+  await expect(ui.toast).toHaveText(await ui.text('idleClamped', '1'));
+  await ui.idle.fill('30');
+  await ui.idle.press('Enter');
+  await expect(ui.toast).toHaveText(await ui.text('saved'));
+});
+
+test('a pasted address deeper than the registrable domain says it locks the whole site', async ({
+  context,
+  sw,
+  extensionId,
+}) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  await completeOnboarding(ui);
+  await ui.domainField.fill('https://m.blog.example.test/someone/123');
+  await expect(page.locator('#domain-preview')).toHaveText(
+    await ui.text('willLockBroader', ['example.test', 'm.blog.example.test']),
+  );
+  await ui.domainField.fill('https://www.example.test/');
+  await expect(page.locator('#domain-preview')).toHaveText(await ui.text('willLock', 'example.test'));
+});
+
+test('an e-mail address and local network names are not sites', async ({ context, sw, extensionId }) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  await completeOnboarding(ui);
+  for (const bad of ['me@example.test', 'printer.local', 'nas.internal', 'router.home.arpa', 'localhost']) {
+    await ui.domainField.fill(bad);
+    await expect(page.locator('#domain-preview'), bad).toHaveText(await ui.text('invalidDomain'));
+  }
+  await ui.domainField.fill('printer.local');
+  await ui.add.click();
+  await expect(ui.domainError).toHaveText(await ui.text('invalidDomain'));
+  await expect(ui.list.locator('li')).toHaveCount(0);
+});
+
+test('the guard hint links to the README section and the About links follow the page language', async ({
+  context,
+  sw,
+  extensionId,
+}) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  await completeOnboarding(ui);
+  const href = await limitsHref(sw);
+  await expect(page.locator('#link-limits')).toHaveAttribute('href', href);
+  await (await ui.menuLink('menuSecurity')).click();
+  const more = page.getByRole('link', { name: await ui.text('guardHintLink') });
+  await expect(more).toHaveAttribute('href', href);
+});
+
+test('the unlock choice is a radio group in Security, saved and kept', async ({ context, sw, extensionId }) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  await completeOnboarding(ui);
+  await (await ui.menuLink('menuSecurity')).click();
+  await expect(await ui.heading('unlockScopeTitle')).toBeVisible();
+  const all = page.getByRole('radio', { name: await ui.text('unlockScopeAll') });
+  const site = page.getByRole('radio', { name: await ui.text('unlockScopeSite') });
+  await expect(all).toBeChecked();
+  await site.check();
+  await expect(ui.toast).toHaveText(await ui.text('saved'));
+  expect(await sw.evaluate(() => (globalThis as unknown as { __fmp: Api }).__fmp.getSettings().then((x) => x.unlockScope))).toBe('site');
+  await page.reload();
+  await expect(site).toBeChecked();
+  await all.check();
+  await expect(all).toBeChecked();
+  await expect(site).not.toBeChecked();
 });

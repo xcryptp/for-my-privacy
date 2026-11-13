@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { viewFor } from '../../entrypoints/options/main';
 
-const state = (patch: Partial<Parameters<typeof viewFor>[0]>) => ({
+const state = (patch: Partial<Parameters<typeof viewFor>[0]>): Parameters<typeof viewFor>[0] => ({
   hasPassword: true,
   unlocked: false,
+  unlockedDomains: [],
   settingsUnlocked: false,
   waitMs: 0,
+  triesLeft: 5,
   settingsGuardAvailable: true,
   ...patch,
 });

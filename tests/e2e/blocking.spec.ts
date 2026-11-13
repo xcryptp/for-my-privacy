@@ -1,5 +1,5 @@
 import type { BrowserContext, Page, Worker } from '@playwright/test';
-import { test, expect } from './fixtures';
+import { test, expect, hasLockPageFor, lockTargetOf } from './fixtures';
 
 type Api = {
   setUnlocked: (domains: string[]) => Promise<void>;
@@ -49,7 +49,8 @@ test('B1: the domain and its subdomains land on the lock page, look-alikes do no
   const lockPrefix = `chrome-extension://${extensionId}/lock.html`;
   for (const host of ['example.test', 'www.example.test', 'm.example.test', 'EXAMPLE.test', 'example.test.']) {
     await visit(page, origin(host));
-    expect(page.url(), host).toMatch(new RegExp(`^${lockPrefix.replace(/[.]/g, '\\.')}#u=`));
+    // `#u=` from the redirect rule, or `#t=` once the lock page swapped it for a token.
+    expect(page.url(), host).toMatch(new RegExp(`^${lockPrefix.replace(/[.]/g, '\\.')}#[ut]=`));
   }
   for (const host of ['notexample.test', 'example.test.notexample.test']) {
     await visit(page, origin(host));
@@ -65,7 +66,8 @@ test('the lock page URL carries the original URL', async ({ context, sw, extensi
   expect(url.protocol).toBe('chrome-extension:');
   expect(url.host).toBe(extensionId);
   expect(url.pathname).toBe('/lock.html');
-  expect(url.hash.startsWith('#u=' + origin('www.example.test') + '/p?q=1')).toBe(true);
+  // The redirect puts the URL after `#u=`; the lock page may already have swapped it for a token.
+  expect((await lockTargetOf(sw, extensionId, page.url()))?.startsWith(origin('www.example.test') + '/p?q=1')).toBe(true);
 });
 
 test('B2: a navigation started by another site is redirected too', async ({ context, sw, extensionId, origin }) => {
@@ -74,7 +76,7 @@ test('B2: a navigation started by another site is redirected too', async ({ cont
   await page.goto(origin('other.test'));
   await expect(page).toHaveTitle('ORIGINAL other.test');
   await page.evaluate((u) => void (location.href = u), origin('example.test'));
-  await expect.poll(() => page.url()).toContain(`chrome-extension://${extensionId}/lock.html#u=`);
+  await expect.poll(() => page.url()).toMatch(new RegExp(`^chrome-extension://${extensionId}/lock\\.html#[ut]=`));
 });
 
 test('B3: unlocking lets the site through until it is cleared', async ({ context, sw, extensionId, origin }) => {
@@ -87,7 +89,7 @@ test('B3: unlocking lets the site through until it is cleared', async ({ context
   await clearUnlock(sw);
   expect(await isUnlocked(sw)).toBe(false);
   await visit(page, origin('www.example.test'));
-  expect(page.url().startsWith(`chrome-extension://${extensionId}/lock.html#u=`)).toBe(true);
+  expect(page.url()).toMatch(new RegExp(`^chrome-extension://${extensionId}/lock\\.html#[ut]=`));
 });
 
 test('B4: block rules survive a browser restart, the unlock does not', async ({
@@ -104,7 +106,7 @@ test('B4: block rules survive a browser restart, the unlock does not', async ({
   expect(await isUnlocked(sw)).toBe(false);
   const page = await context.newPage();
   await visit(page, origin('example.test'));
-  expect(page.url().startsWith(`chrome-extension://${extensionId}/lock.html#u=`)).toBe(true);
+  expect(page.url()).toMatch(new RegExp(`^chrome-extension://${extensionId}/lock\\.html#[ut]=`));
 });
 
 test('B6: view-source of a locked page shows the lock page', async ({ context, sw, extensionId, origin }) => {
@@ -129,9 +131,8 @@ test('B9a: a domain without host permission is blocked, then its tab ends on the
   // The block rule fails the navigation itself (no redirect without host access).
   await expect.poll(() => failed.find((f) => f.url === url)?.error).toBe('net::ERR_BLOCKED_BY_CLIENT');
   // Chrome's blocked page commits under the site's URL; the tab guard then swaps the tab for
-  // the lock page. The site's own page is never the final state.
-  const lockUrl = `chrome-extension://${extensionId}/lock.html#u=${url}`;
-  await expect.poll(() => context.pages().some((p) => !p.isClosed() && p.url() === lockUrl)).toBe(true);
+  // the lock page (a `#t=` token page). The site's own page is never the final state.
+  await expect.poll(() => hasLockPageFor(context, sw, extensionId, url)).toBe(true);
   await new Promise((r) => setTimeout(r, 500));
   for (const p of context.pages()) {
     if (p.isClosed()) continue;
@@ -195,16 +196,13 @@ async function installSiteWorker(
 }
 
 /** Types the cached page into a new tab; it must end on the lock page and nothing shows the site. */
-async function expectTypedPageLocked(context: BrowserContext, extensionId: string, url: string) {
+async function expectTypedPageLocked(context: BrowserContext, sw: Worker, extensionId: string, url: string) {
   const title = `ORIGINAL ${new URL(url).hostname}`;
   // The relock sent the site's tab to the lock page; close it so only the new tab can show one.
-  const lockUrl = `chrome-extension://${extensionId}/lock.html#u=${url}`;
-  for (const p of context.pages()) if (p.url() === lockUrl) await p.close();
+  for (const p of context.pages()) if (p.url().startsWith(`chrome-extension://${extensionId}/lock.html`)) await p.close();
   const typed = await context.newPage();
   await typed.goto(url).catch(() => {});
-  await expect.soft
-    .poll(() => context.pages().some((p) => !p.isClosed() && p.url() === lockUrl), { timeout: 5_000 })
-    .toBe(true);
+  await expect.soft.poll(() => hasLockPageFor(context, sw, extensionId, url), { timeout: 5_000 }).toBe(true);
   await new Promise((r) => setTimeout(r, 500));
   for (const p of context.pages()) {
     if (p.isClosed()) continue;
@@ -226,7 +224,7 @@ test('B10: a site service worker cannot show a locked page or fetch its data aft
   await lockNow(sw);
 
   // (a) A new tab typed to the page the service worker cached shows the lock page, not the page.
-  await expectTypedPageLocked(context, extensionId, origin('example.test') + '/sw-page');
+  await expectTypedPageLocked(context, sw, extensionId, origin('example.test') + '/sw-page');
   // (b) The site's data cannot be fetched any more, even from a page loaded while unlocked.
   expect(await fetchApi()).toMatch(/^failed: /);
 
@@ -252,7 +250,7 @@ test('B11: without the service-worker removal, the tab guard and the rules still
   await disableSiteDataRemoval(sw);
   await lockNow(sw);
   // The service worker answers the navigation from its cache; tabs.onUpdated replaces the tab.
-  await expectTypedPageLocked(context, extensionId, origin('example.test') + '/sw-page');
+  await expectTypedPageLocked(context, sw, extensionId, origin('example.test') + '/sw-page');
   expect(await fetchApi()).toMatch(/^failed: /);
 
   // Check the premise: the service worker really survived, so the network rules never saw the page.
@@ -284,7 +282,7 @@ test('B12: a domain without host permission answered by its own service worker s
   await lockNow(sw);
   // No redirect can apply without host access, and the worker answers from its cache anyway;
   // the tab guard still replaces the tab.
-  await expectTypedPageLocked(context, extensionId, origin('noperm.test') + '/sw-page');
+  await expectTypedPageLocked(context, sw, extensionId, origin('noperm.test') + '/sw-page');
   expect(await fetchApi()).toMatch(/^failed: /);
 
   // Premise: the worker survived the relock.

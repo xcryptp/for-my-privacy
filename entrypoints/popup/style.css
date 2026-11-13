@@ -1,0 +1,66 @@
+/* Toolbar popup: a name and two buttons. No site names, no settings content. */
+body {
+  width: 20rem;
+  padding: var(--space-4);
+}
+
+.popup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.head h1 {
+  font-size: 1.125rem;
+}
+
+.icon {
+  flex: none;
+  color: var(--accent);
+}
+
+.popup button {
+  width: 100%;
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+button.secondary:hover:not(:disabled) {
+  background: var(--bg);
+  color: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.status {
+  min-height: 1.5rem;
+  color: var(--success);
+  font-weight: 600;
+  text-align: center;
+}
+
+.status.note {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.muted {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+:lang(ko) .status,
+:lang(ko) .muted {
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}

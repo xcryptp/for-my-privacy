@@ -4,9 +4,12 @@ import {
   applySettings,
   handleMessage,
   onBrowserStart,
+  onCommand,
+  onFrameCommitted,
   onIdleStateChanged,
   onInstalled,
   onPermissionsRemoved,
+  onTabActivated,
   onTabRemoved,
   onTabReplaced,
   onTabUpdated,
@@ -39,6 +42,15 @@ export default defineBackground(() => {
   });
   browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     onTabUpdated(tabId, changeInfo, tab).catch(logErrors('tabs.onUpdated'));
+  });
+  browser.webNavigation.onCommitted.addListener((details) => {
+    onFrameCommitted(details).catch(logErrors('webNavigation.onCommitted'));
+  });
+  browser.commands.onCommand.addListener((command) => {
+    onCommand(command).catch(logErrors('commands.onCommand'));
+  });
+  browser.tabs.onActivated.addListener((info) => {
+    onTabActivated(info).catch(logErrors('tabs.onActivated'));
   });
   browser.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
     onTabReplaced(addedTabId, removedTabId).catch(logErrors('tabs.onReplaced'));

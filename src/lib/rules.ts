@@ -1,4 +1,5 @@
 import { browser } from 'wxt/browser';
+import type { UnlockScope } from './settings';
 
 type Rule = Browser.declarativeNetRequest.Rule;
 
@@ -6,7 +7,8 @@ export const RULE_REDIRECT = 1;
 export const RULE_FALLBACK_BLOCK = 2;
 export const RULE_UNLOCK = 100;
 
-const lockPageBase = () => browser.runtime.getURL('/lock.html');
+/** The lock page without a target. */
+export const lockPageBase = () => browser.runtime.getURL('/lock.html');
 
 /**
  * Every declarativeNetRequest resource type Chrome 120 knows. The block and unlock rules cover
@@ -78,21 +80,40 @@ export async function syncBlockRules(domains: string[]): Promise<void> {
   });
 }
 
-/** Session allow rule: lets `domains` through until it is cleared or the browser restarts. */
-export async function setUnlocked(domains: string[]): Promise<void> {
+// The session allow rule carries one marker domain that says which unlock scope created it, so
+// the rule exists even with no locked domains (otherwise an unlock with an empty list would read
+// as locked) and a scope change can be detected from the rule alone. `.invalid` is reserved
+// (RFC 2606) and never resolves, so allowing it lets nothing through.
+export const UNLOCK_MARKERS: Record<UnlockScope, string> = {
+  all: 'all.unlocked.for-my-privacy.invalid',
+  site: 'site.unlocked.for-my-privacy.invalid',
+};
+const MARKER_DOMAINS = new Set(Object.values(UNLOCK_MARKERS));
+
+/** The session unlock: the scope that created it (null for an unknown marker) and its domains. */
+export interface UnlockRule {
+  scope: UnlockScope | null;
+  domains: string[];
+}
+
+/**
+ * Session allow rule: lets `domains` through until it is cleared or the browser restarts.
+ * `scope` is recorded in the rule's marker domain.
+ */
+export async function setUnlocked(domains: string[], scope: UnlockScope = 'all'): Promise<void> {
   await browser.declarativeNetRequest.updateSessionRules({
     removeRuleIds: [RULE_UNLOCK],
-    addRules:
-      domains.length === 0
-        ? []
-        : ([
-            {
-              id: RULE_UNLOCK,
-              priority: 3,
-              condition: { requestDomains: domains, resourceTypes: [...ALL_RESOURCE_TYPES] },
-              action: { type: 'allow' },
-            },
-          ] as Rule[]),
+    addRules: [
+      {
+        id: RULE_UNLOCK,
+        priority: 3,
+        condition: {
+          requestDomains: [...domains.filter((d) => !MARKER_DOMAINS.has(d)), UNLOCK_MARKERS[scope]],
+          resourceTypes: [...ALL_RESOURCE_TYPES],
+        },
+        action: { type: 'allow' },
+      },
+    ] as Rule[],
   });
 }
 
@@ -101,18 +122,32 @@ export async function clearUnlocked(): Promise<void> {
 }
 
 export async function isUnlocked(): Promise<boolean> {
+  return (await readUnlock()) !== null;
+}
+
+/** The session unlock rule, or null while locked. Throws when the rules cannot be read. */
+export async function readUnlock(): Promise<UnlockRule | null> {
   const rules = await browser.declarativeNetRequest.getSessionRules();
-  return rules.some((r) => r.id === RULE_UNLOCK);
+  const rule = rules.find((r) => r.id === RULE_UNLOCK);
+  if (!rule) return null;
+  const listed = rule.condition.requestDomains ?? [];
+  const scope =
+    (Object.keys(UNLOCK_MARKERS) as UnlockScope[]).find((s) => listed.includes(UNLOCK_MARKERS[s])) ?? null;
+  return { scope, domains: listed.filter((d) => !MARKER_DOMAINS.has(d)) };
 }
 
-/** The lock page URL for `originalUrl`, in the same format the redirect rule produces. */
-export function lockPageUrl(originalUrl: string): string {
-  return lockPageBase() + '#u=' + originalUrl;
+/** Lock page tokens: 32 lower-case hex characters (16 random bytes). */
+export const TOKEN_PATTERN = /^[0-9a-f]{32}$/;
+
+/** The lock page URL for a target token; the private URL itself stays in the service worker. */
+export function lockPageTokenUrl(token: string): string {
+  return lockPageBase() + '#t=' + token;
 }
 
-/** The original URL inside a lock page URL (everything after the first `#u=`), else undefined. */
-export function lockPageTarget(url: string | undefined): string | undefined {
-  const prefix = lockPageBase() + '#u=';
+/** The token inside a `#t=` lock page URL of this extension, else undefined. */
+export function lockPageToken(url: string | undefined): string | undefined {
+  const prefix = lockPageBase() + '#t=';
   if (!url?.startsWith(prefix)) return undefined;
-  return url.slice(prefix.length) || undefined;
+  const token = url.slice(prefix.length);
+  return TOKEN_PATTERN.test(token) ? token : undefined;
 }

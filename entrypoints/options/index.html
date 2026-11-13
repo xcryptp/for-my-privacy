@@ -39,7 +39,7 @@
         </div>
 
         <div id="step-1" class="step" hidden>
-          <h2 id="step-1-title" tabindex="-1" data-i18n="onboardingWelcomeTitle"></h2>
+          <h2 id="step-1-title" tabindex="-1" aria-describedby="ob-progress-sr" data-i18n="onboardingWelcomeTitle"></h2>
           <ul class="points">
             <li data-i18n="onboardingWelcomeLine1"></li>
             <li data-i18n="onboardingWelcomeLine2"></li>
@@ -54,9 +54,13 @@
         </div>
 
         <div id="step-2" class="step" hidden>
-          <h2 id="step-2-title" tabindex="-1" data-i18n="setupTitle"></h2>
+          <h2 id="step-2-title" tabindex="-1" aria-describedby="ob-progress-sr" data-i18n="setupTitle"></h2>
           <form id="setup-form" class="form" autocomplete="off">
             <p id="setup-hint" class="muted" data-i18n="setupHint"></p>
+            <div id="setup-warning" class="warning" role="note">
+              <strong data-i18n="setupWarningTitle"></strong>
+              <span data-i18n="setupWarningBody"></span>
+            </div>
             <label for="setup-password" class="spaced" data-i18n="passwordLabel"></label>
             <input id="setup-password" type="password" autocomplete="new-password" required />
             <label for="setup-confirm" class="spaced" data-i18n="confirmPasswordLabel"></label>
@@ -78,7 +82,7 @@
         </div>
 
         <div id="step-3" class="step" hidden>
-          <h2 id="step-3-title" tabindex="-1" data-i18n="onboardingSitesTitle"></h2>
+          <h2 id="step-3-title" tabindex="-1" aria-describedby="ob-progress-sr" data-i18n="onboardingSitesTitle"></h2>
           <p class="muted" data-i18n="onboardingSitesHint"></p>
           <div id="ob-chips" class="chips" role="group" aria-labelledby="step-3-title"></div>
           <div class="field">
@@ -105,7 +109,7 @@
         </div>
 
         <div id="step-4" class="step" hidden>
-          <h2 id="step-4-title" tabindex="-1" data-i18n="idleTitle"></h2>
+          <h2 id="step-4-title" tabindex="-1" aria-describedby="ob-progress-sr" data-i18n="idleTitle"></h2>
           <div class="field">
             <label for="ob-idle" data-i18n="idleMinutesLabel"></label>
             <input id="ob-idle" class="narrow" type="number" min="1" max="60" step="1" inputmode="numeric" />
@@ -120,10 +124,19 @@
             <button id="finish" type="button" data-i18n="finishButton"></button>
           </div>
         </div>
+
+        <!-- Only after a reload mid-onboarding: a way out to the settings -->
+        <button id="ob-skip-setup" type="button" class="linklike" data-i18n="onboardingSkipSetup" hidden></button>
       </section>
 
       <!-- Password set, locked: nothing but the unlock form -->
       <section id="view-locked" class="card" hidden>
+        <!-- Only for #permission-lost; says nothing about which sites -->
+        <section id="locked-notice" class="notice" aria-labelledby="locked-notice-title" hidden>
+          <h2 id="locked-notice-title" data-i18n="permissionLostTitle"></h2>
+          <p data-i18n="permissionLostLockedBody"></p>
+        </section>
+        <p id="unlock-hint" class="muted" data-i18n="settingsUnlockHint"></p>
         <form id="unlock-form" class="form" autocomplete="off">
           <label for="unlock-password" data-i18n="passwordLabel"></label>
           <input id="unlock-password" type="password" autocomplete="new-password" required />
@@ -145,7 +158,7 @@
           <p id="tip" class="tip" role="status"></p>
 
           <div id="panel-sites" class="stack" data-panel="sites" hidden>
-            <section id="permission-lost" class="notice" aria-labelledby="permission-lost-title" hidden>
+            <section id="permission-lost" class="notice" tabindex="-1" aria-labelledby="permission-lost-title" hidden>
               <h2 id="permission-lost-title" data-i18n="permissionLostTitle"></h2>
               <p data-i18n="permissionLostBody"></p>
               <button id="grant" type="button" data-i18n="grantButton"></button>
@@ -210,7 +223,24 @@
                 <input id="guard" type="checkbox" role="switch" aria-describedby="guard-hint" />
                 <span data-i18n="guardLabel"></span>
               </label>
-              <p id="guard-hint" class="muted hint" data-i18n="guardHint"></p>
+              <p id="guard-hint" class="muted hint">
+                <span data-i18n="guardHint"></span>
+                <a id="guard-more" target="_blank" rel="noopener noreferrer" data-i18n="guardHintLink"></a>
+              </p>
+            </section>
+
+            <section class="card" aria-labelledby="scope-title">
+              <h2 id="scope-title" tabindex="-1" data-i18n="unlockScopeTitle"></h2>
+              <div class="stack-sm" role="radiogroup" aria-labelledby="scope-title">
+                <label class="radio" for="scope-all">
+                  <input id="scope-all" name="unlock-scope" type="radio" value="all" />
+                  <span data-i18n="unlockScopeAll"></span>
+                </label>
+                <label class="radio" for="scope-site">
+                  <input id="scope-site" name="unlock-scope" type="radio" value="site" />
+                  <span data-i18n="unlockScopeSite"></span>
+                </label>
+              </div>
             </section>
           </div>
 

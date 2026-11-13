@@ -1,5 +1,5 @@
 import { browser } from 'wxt/browser';
-import { normalizeDomain } from './domain';
+import { cleanStoredDomain } from './domain';
 import type { PasswordRecord } from './password';
 
 export interface Settings {
@@ -7,13 +7,18 @@ export interface Settings {
   idleMinutes: number;
   lockOnScreenLock: boolean;
   settingsGuard: boolean;
+  /** Which sites a site unlock opens: every locked site together, or only the site that asked. */
+  unlockScope: UnlockScope;
 }
+
+export type UnlockScope = 'all' | 'site';
 
 export const DEFAULT_SETTINGS: Settings = {
   domains: [],
   idleMinutes: 5,
   lockOnScreenLock: true,
   settingsGuard: true,
+  unlockScope: 'all',
 };
 
 export interface Auth {
@@ -29,11 +34,16 @@ const AUTH_KEY = 'auth';
 const MIN_IDLE_MINUTES = 1;
 const MAX_IDLE_MINUTES = 60;
 
-function cleanDomains(value: unknown[]): string[] {
+/**
+ * A cheap check on read and write: lower-case valid host names, no more. Reducing user input to its
+ * registrable domain needs the Public Suffix List and lives in `settings-input.ts`, which only the
+ * options page uses; the service worker and the lock page never load that list.
+ */
+function cleanStoredDomains(value: unknown[]): string[] {
   const out = new Set<string>();
   for (const item of value) {
     if (typeof item !== 'string') continue;
-    const domain = normalizeDomain(item);
+    const domain = cleanStoredDomain(item);
     if (domain) out.add(domain);
   }
   return [...out];
@@ -43,13 +53,14 @@ function cleanDomains(value: unknown[]): string[] {
 // usable. On write an unusable patch value keeps the stored value (never the default),
 // so a bad call cannot unlock sites or reset the wrong-password wait.
 const SETTINGS_FIELDS: { [K in keyof Settings]: (value: unknown) => Settings[K] | undefined } = {
-  domains: (v) => (Array.isArray(v) ? cleanDomains(v) : undefined),
+  domains: (v) => (Array.isArray(v) ? cleanStoredDomains(v) : undefined),
   idleMinutes: (v) =>
     typeof v === 'number' && Number.isFinite(v)
       ? Math.min(MAX_IDLE_MINUTES, Math.max(MIN_IDLE_MINUTES, Math.round(v)))
       : undefined,
   lockOnScreenLock: (v) => (typeof v === 'boolean' ? v : undefined),
   settingsGuard: (v) => (typeof v === 'boolean' ? v : undefined),
+  unlockScope: (v) => (v === 'all' || v === 'site' ? v : undefined),
 };
 
 function isPasswordRecord(value: unknown): value is PasswordRecord {

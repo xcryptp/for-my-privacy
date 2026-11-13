@@ -12,15 +12,10 @@ describe('settings', () => {
     expect(await getSettings()).toEqual(DEFAULT_SETTINGS);
   });
 
-  it('normalizes, dedupes and drops invalid domains', async () => {
-    const saved = await saveSettings({ domains: ['WWW.Instagram.com', 'instagram.com', 'bad'] });
+  it('keeps valid host names, lower-cased and deduplicated, and drops the rest (no Public Suffix List)', async () => {
+    const saved = await saveSettings({ domains: ['Instagram.com', 'instagram.com', 'bad', 'a b.com'] });
     expect(saved.domains).toEqual(['instagram.com']);
     expect((await getSettings()).domains).toEqual(['instagram.com']);
-  });
-
-  it('collapses subdomain entries into their registrable domain', async () => {
-    const saved = await saveSettings({ domains: ['m.instagram.com', 'instagram.com', 'a.b.example.test'] });
-    expect(saved.domains).toEqual(['instagram.com', 'example.test']);
   });
 
   it('clamps and rounds idleMinutes to an integer from 1 to 60', async () => {
@@ -33,7 +28,13 @@ describe('settings', () => {
   it('keeps fields that are not in the patch', async () => {
     await saveSettings({ domains: ['example.com'], lockOnScreenLock: false });
     const saved = await saveSettings({ idleMinutes: 10 });
-    expect(saved).toEqual({ domains: ['example.com'], idleMinutes: 10, lockOnScreenLock: false, settingsGuard: true });
+    expect(saved).toEqual({
+      domains: ['example.com'],
+      idleMinutes: 10,
+      lockOnScreenLock: false,
+      settingsGuard: true,
+      unlockScope: 'all',
+    });
   });
 
   it('falls back to defaults field by field for bad stored values', async () => {
@@ -46,7 +47,8 @@ describe('settings', () => {
   it('cleans stored values that are the right type but out of range', async () => {
     await browser.storage.local.set({ settings: { domains: ['WWW.A.com', 5, 'a.com'], idleMinutes: 500 } });
     const s = await getSettings();
-    expect(s.domains).toEqual(['a.com']);
+    // On read only the cheap label check runs: lower-cased, no registrable-domain reduction.
+    expect(s.domains).toEqual(['www.a.com', 'a.com']);
     expect(s.idleMinutes).toBe(60);
   });
 
@@ -62,7 +64,24 @@ describe('settings', () => {
       idleMinutes: 10,
       lockOnScreenLock: false,
       settingsGuard: true,
+      unlockScope: 'all',
     });
+  });
+
+  it('defaults the unlock scope to all and saves site or all', async () => {
+    expect((await getSettings()).unlockScope).toBe('all');
+    expect((await saveSettings({ unlockScope: 'site' })).unlockScope).toBe('site');
+    expect((await getSettings()).unlockScope).toBe('site');
+    expect((await saveSettings({ unlockScope: 'all' })).unlockScope).toBe('all');
+  });
+
+  it('keeps the stored unlock scope for an invalid patch value and reads a bad stored one as all', async () => {
+    await saveSettings({ unlockScope: 'site' });
+    expect((await saveSettings({ unlockScope: 'some' as any })).unlockScope).toBe('site');
+    expect((await saveSettings({ unlockScope: undefined })).unlockScope).toBe('site');
+    expect((await saveSettings({ idleMinutes: 9 })).unlockScope).toBe('site');
+    await browser.storage.local.set({ settings: { unlockScope: 'everything' } });
+    expect((await getSettings()).unlockScope).toBe('all');
   });
 
   it('still clears the list with an explicit empty array', async () => {

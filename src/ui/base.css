@@ -22,6 +22,10 @@
   --danger-bg: #fdeceb;
   --success: #1b6e3c;
   --success-bg: #e8f5ec;
+  /* A warning that must be read: amber, distinct from the red of an error. */
+  --warn: #6b4100;
+  --warn-bg: #fff3d6;
+  --warn-border: #b26a00;
   --focus: #1a56db;
   --disabled-bg: #dfe3ea;
   --disabled-text: #5c6677;
@@ -53,6 +57,9 @@
     --danger-bg: #3a1f22;
     --success: #7fd9a0;
     --success-bg: #17301f;
+    --warn: #ffd89a;
+    --warn-bg: #3a2c12;
+    --warn-border: #d99a3a;
     --focus: #9db9ff;
     --disabled-bg: #2a3242;
     --disabled-text: #8e99ad;

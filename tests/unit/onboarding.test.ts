@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   LEARN_MORE_URL,
@@ -12,7 +13,12 @@ import {
   parseProgress,
   previewFor,
   resumeStep,
-  wildcardForms,
+  wildcardForm,
+  commitTypedSite,
+  doneTipKey,
+  limitsUrl,
+  nextLabelKey,
+  readmeLang,
 } from '../../entrypoints/options/onboarding';
 
 describe('step navigation', () => {
@@ -79,9 +85,9 @@ describe('selectedOrigins', () => {
   });
 });
 
-describe('wildcardForms', () => {
-  it('shows that subdomains of every depth are included', () => {
-    expect(wildcardForms('instagram.com')).toBe('*.instagram.com · *.*.instagram.com');
+describe('wildcardForm', () => {
+  it('is the single wildcard notation', () => {
+    expect(wildcardForm('instagram.com')).toBe('*.instagram.com');
   });
 });
 
@@ -97,12 +103,90 @@ describe('previewFor', () => {
 
   it('is invalid for input that is not a site', () => {
     expect(previewFor('not a domain')).toEqual({ kind: 'invalid' });
+    expect(previewFor('me@example.com')).toEqual({ kind: 'invalid' });
+    expect(previewFor('printer.local')).toEqual({ kind: 'invalid' });
+  });
+
+  it('says so when the locked domain is wider than the address typed', () => {
+    expect(previewFor('https://m.blog.naver.com/someone/123')).toEqual({
+      kind: 'ok',
+      domain: 'naver.com',
+      typed: 'm.blog.naver.com',
+    });
+  });
+
+  it('says nothing extra when only www was dropped', () => {
+    expect(previewFor('www.instagram.com')).toEqual({ kind: 'ok', domain: 'instagram.com' });
+    expect(previewFor('instagram.com')).toEqual({ kind: 'ok', domain: 'instagram.com' });
   });
 });
 
-describe('LEARN_MORE_URL', () => {
-  it('points at the English README limits section', () => {
+describe('commitTypedSite', () => {
+  it('has nothing to add for empty text', () => {
+    expect(commitTypedSite(PRESET_SITES, [], '')).toEqual({ kind: 'none' });
+    expect(commitTypedSite(PRESET_SITES, [], '   ')).toEqual({ kind: 'none' });
+  });
+
+  it('adds a typed site as a selected chip, like the Add button', () => {
+    expect(commitTypedSite(PRESET_SITES, ['x.com'], 'youtube.com')).toEqual({
+      kind: 'added',
+      domain: 'youtube.com',
+      chips: [...PRESET_SITES],
+      selected: ['x.com', 'youtube.com'],
+    });
+    const res = commitTypedSite(PRESET_SITES, [], 'https://m.naver.com');
+    expect(res).toMatchObject({ kind: 'added', domain: 'naver.com', selected: ['naver.com'] });
+  });
+
+  it('is invalid for typed text that is not a site', () => {
+    expect(commitTypedSite(PRESET_SITES, ['x.com'], 'not a domain')).toEqual({ kind: 'invalid' });
+  });
+});
+
+describe('nextLabelKey', () => {
+  it('is Skip only while nothing is chosen and nothing is typed', () => {
+    expect(nextLabelKey(0, '')).toBe('skipButton');
+    expect(nextLabelKey(0, '  ')).toBe('skipButton');
+    expect(nextLabelKey(0, 'youtube.com')).toBe('nextButton');
+    expect(nextLabelKey(2, '')).toBe('nextButton');
+  });
+});
+
+describe('doneTipKey', () => {
+  it('claims locked sites only when a site was saved', () => {
+    expect(doneTipKey(0)).toBe('onboardingDoneTipEmpty');
+    expect(doneTipKey(1)).toBe('onboardingDoneTip');
+  });
+});
+
+describe('limits links', () => {
+  it('point at the English README limits section by default', () => {
     expect(LEARN_MORE_URL).toBe('https://github.com/xcryptp/for-my-privacy#what-it-protects-and-what-it-does-not');
+    expect(limitsUrl('en-US')).toBe(LEARN_MORE_URL);
+    expect(limitsUrl('fr')).toBe(LEARN_MORE_URL);
+  });
+
+  it('follow the UI language to the Korean and Japanese README, with their own anchors', () => {
+    expect(limitsUrl('ko')).toBe(
+      `https://github.com/xcryptp/for-my-privacy/blob/main/README.ko.md#${encodeURI('무엇을-막고-무엇은-막지-못하나')}`,
+    );
+    expect(limitsUrl('ja-JP')).toBe(
+      `https://github.com/xcryptp/for-my-privacy/blob/main/README.ja.md#${encodeURI('何を守り何を守れないか')}`,
+    );
+  });
+
+  it('read the language from the first part of the tag', () => {
+    expect(readmeLang('ko-KR')).toBe('ko');
+    expect(readmeLang('JA')).toBe('ja');
+    expect(readmeLang('en_GB')).toBe('en');
+    expect(readmeLang('')).toBe('en');
+  });
+
+  it('use anchors that match the README headings', () => {
+    const readme = (file: string) => readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8');
+    expect(readme('README.md')).toContain('## What it protects and what it does not');
+    expect(readme('README.ko.md')).toContain('## 무엇을 막고 무엇은 막지 못하나');
+    expect(readme('README.ja.md')).toContain('## 何を守り何を守れないか');
   });
 });
 

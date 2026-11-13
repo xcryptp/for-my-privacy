@@ -24,7 +24,7 @@
     "message": "パスワードが違います。"
   },
   "tooManyAttempts": {
-    "message": "試行回数が多すぎます。しばらくしてからもう一度お試しください（残り$1）。"
+    "message": "パスワードの間違いが続きました。$1後にもう一度お試しください。"
   },
   "unlockedNoReturn": {
     "message": "ロックを解除しました。サイトをもう一度開くことができます。"
@@ -39,7 +39,7 @@
     "message": "パスワードを作成"
   },
   "setupHint": {
-    "message": "8文字以上で入力してください。パスワードは復元できません。忘れた場合は、拡張機能を入れ直してください。"
+    "message": "8文字以上で入力してください。"
   },
   "confirmPasswordLabel": {
     "message": "パスワードの確認"
@@ -57,10 +57,10 @@
     "message": "ロックするサイト"
   },
   "domainsHint": {
-    "message": "どんなアドレスでも貼り付けられます。そのサイトとすべてのサブドメインがロックされます。例: *.example.com"
+    "message": "どのアドレスでも貼り付けられます。そのサイトと、その下にあるすべてのアドレス（例: m.example.com）がロックされます。"
   },
   "addDomainPlaceholder": {
-    "message": "example.com または *.example.com"
+    "message": "example.com または完全なアドレス"
   },
   "addButton": {
     "message": "追加"
@@ -78,7 +78,7 @@
     "message": "Chromeがこのサイトへのアクセスを許可しなかったため、追加できませんでした。"
   },
   "relatedSuggestion": {
-    "message": "$1もロックしますか？"
+    "message": "$1もロックしますか？（同じサービスの別のアドレスです）"
   },
   "idleTitle": {
     "message": "自動でもう一度ロック"
@@ -93,7 +93,7 @@
     "message": "Chromeの拡張機能ページを開く前にパスワードを求める"
   },
   "guardHint": {
-    "message": "ツールバーのメニューから拡張機能を削除することは防げません。READMEをご覧ください。"
+    "message": "ツールバーのメニューから拡張機能を削除することは防げません。"
   },
   "changePasswordTitle": {
     "message": "パスワードを変更"
@@ -153,7 +153,7 @@
     "message": "GitHub のソースコード"
   },
   "willLock": {
-    "message": "$1 とそのすべてのサブドメインをロックします。"
+    "message": "$1 と、その下にあるすべてのアドレス（例: m.$1）をロックします。"
   },
   "onboardingProgress": {
     "message": "$2 ステップ中 $1 ステップ目"
@@ -195,12 +195,96 @@
     "message": "ロックするサイトを選ぶ"
   },
   "onboardingSitesHint": {
-    "message": "今ロックしたいサイトを選んでください。Chrome がアクセスの許可を一度だけ確認します。リストはあとから変更できます。"
+    "message": "今ロックしたいサイトを選んでください。そのあと Chrome が、この拡張機能がそれらのサイトを見ることを許可するか確認します。サイトの代わりにロック画面を表示するために必要なので、「許可」を選んでください。リストはあとから変更できます。"
   },
   "onboardingCustomLabel": {
     "message": "ほかのサイト"
   },
   "onboardingDoneTip": {
-    "message": "準備ができました。選んだサイトは今ロックされています。新しいタブで開いて、ロック画面を確認してください。"
+    "message": "準備ができました。選んだサイトは今ロックされています。新しいタブで開いて、ロック画面を確認してください。あとで今すぐロックしたいときは、ツールバーのこの拡張機能のアイコンをクリックします。"
+  },
+  "waitSeconds": {
+    "message": "$1秒"
+  },
+  "waitMinutes": {
+    "message": "$1分"
+  },
+  "waitMinutesSeconds": {
+    "message": "$1分$2秒"
+  },
+  "wrongPasswordTries": {
+    "message": "パスワードが違います。あと$1回間違えると、しばらく待つことになります。"
+  },
+  "wrongPasswordLastTry": {
+    "message": "パスワードが違います。あと1回間違えると、しばらく待つことになります。"
+  },
+  "forgotSummary": {
+    "message": "パスワードを忘れた場合"
+  },
+  "forgotBody": {
+    "message": "忘れたパスワードは復元できません。最初からやり直すには、この拡張機能を削除してください。Chrome のツールバーでこの拡張機能のアイコンを右クリックし、「Chrome から削除」を選びます（アイコンが見えないときは、先にパズルのピースのアイコンをクリックします）。パスワードとロックしたサイトの一覧も消えます。そのあと、もう一度インストールしてください。"
+  },
+  "unlockHintAll": {
+    "message": "ロックしたサイトがすべていっしょに開きます。"
+  },
+  "unlockHintSite": {
+    "message": "$1だけが開きます。"
+  },
+  "unlockHintThisSite": {
+    "message": "このサイトだけが開きます。"
+  },
+  "lockSettingsHint": {
+    "message": "設定を開くときは、もう一度パスワードが必要です。ロックしたサイトはそのままロックされています。"
+  },
+  "settingsUnlockHint": {
+    "message": "ここで開くのは設定だけです。ロックしたサイトはロックされたままです。"
+  },
+  "permissionLostLockedBody": {
+    "message": "設定のロックを解除してから、「サイト」でアクセスをもう一度許可してください。"
+  },
+  "setupWarningTitle": {
+    "message": "このパスワードは復元できません。"
+  },
+  "setupWarningBody": {
+    "message": "忘れた場合は、拡張機能を削除してもう一度インストールするしかありません。そのときは、ロックしたサイトの一覧も消えます。"
+  },
+  "onboardingDoneTipEmpty": {
+    "message": "準備ができました。まだロックしたサイトはありません。「サイト」から追加してください。"
+  },
+  "onboardingSkipSetup": {
+    "message": "セットアップをスキップして設定へ"
+  },
+  "willLockBroader": {
+    "message": "$2 だけでなく、$1 全体がロックされます。"
+  },
+  "domainAlsoLocks": {
+    "message": "その下にあるすべてのアドレスも対象です（例: m.$1）"
+  },
+  "guardHintLink": {
+    "message": "守れるものと守れないものを見る"
+  },
+  "idleClamped": {
+    "message": "指定できるのは1分から60分までなので、$1分に変更しました。"
+  },
+  "unlockScopeTitle": {
+    "message": "サイトのロックを解除するとき"
+  },
+  "unlockScopeAll": {
+    "message": "ロックしたサイトをすべていっしょに解除する"
+  },
+  "unlockScopeSite": {
+    "message": "そのサイトだけ解除する"
+  },
+  "popupOpenSettings": {
+    "message": "設定を開く"
+  },
+  "popupLocked": {
+    "message": "ロックしました"
+  },
+  "popupShortcut": {
+    "message": "ショートカット: $1"
+  },
+  "popupNotSet": {
+    "message": "先に設定でセットアップを完了してください。"
   }
 }

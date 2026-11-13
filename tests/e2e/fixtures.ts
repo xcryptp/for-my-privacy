@@ -17,10 +17,12 @@ const HOST_MAP = [
   '*.notexample.test',
   'noperm.test',
   'other.test',
+  'second.test',
+  '*.second.test',
 ];
 const HOST_RESOLVER_RULES = HOST_MAP.map((h) => `MAP ${h} 127.0.0.1`).join(', ');
 // Origins treated as secure so their pages can register a service worker.
-const SW_HOSTS = ['example.test', 'www.example.test', 'm.example.test', 'noperm.test'];
+const SW_HOSTS = ['example.test', 'www.example.test', 'm.example.test', 'a.b.c.example.test', 'noperm.test'];
 
 type BrowserState = {
   context: BrowserContext;
@@ -88,6 +90,14 @@ self.addEventListener('fetch', (e) => {
         if (pathname === '/sw-page') {
           res.end(
             `<!doctype html><title>ORIGINAL ${host}</title><body>ORIGINAL-PAGE<script>navigator.serviceWorker.register('/sw.js')</script></body>`,
+          );
+          return;
+        }
+        if (pathname === '/frame-sw') {
+          // A page of the site that embeds a deeper subdomain, which registers its own service
+          // worker from inside the frame (that origin never shows as a top-level tab).
+          res.end(
+            `<!doctype html><title>ORIGINAL ${host}</title><body><iframe src="http://a.b.c.example.test:${port}/sw-page"></iframe></body>`,
           );
           return;
         }
@@ -164,3 +174,35 @@ self.addEventListener('fetch', (e) => {
 });
 
 export const expect = test.expect;
+
+/**
+ * The target of a lock page URL: the raw `#u=` text, or for `#t=<token>` the target the service
+ * worker stored for that token (undefined when it has none). Other URLs give undefined.
+ */
+export async function lockTargetOf(sw: Worker, extensionId: string, url: string): Promise<string | undefined> {
+  const base = `chrome-extension://${extensionId}/lock.html`;
+  if (url.startsWith(base + '#u=')) return url.slice(base.length + 3);
+  if (!url.startsWith(base + '#t=')) return undefined;
+  const key = 'lockTarget:' + url.slice(base.length + 3);
+  return sw.evaluate(
+    async (k) => ((await chrome.storage.session.get(k))[k] as { url?: string } | undefined)?.url,
+    key,
+  );
+}
+
+/** True when some open page is a lock page for `target` (either URL form). */
+export async function hasLockPageFor(
+  context: BrowserContext,
+  sw: Worker,
+  extensionId: string,
+  target: string,
+): Promise<boolean> {
+  for (const p of context.pages()) {
+    if (p.isClosed()) continue;
+    if ((await lockTargetOf(sw, extensionId, p.url())) === target) return true;
+  }
+  return false;
+}
+
+// The callbacks passed to sw.evaluate run inside the service worker, where `chrome` exists.
+declare const chrome: typeof import('wxt/browser').browser;

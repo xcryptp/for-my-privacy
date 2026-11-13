@@ -28,11 +28,20 @@
         <input id="password" name="password" type="password" autocomplete="new-password" required />
         <p id="error" class="message error" role="alert"></p>
         <button id="submit" type="submit" data-i18n="unlockButton"></button>
+        <p id="scope-hint" class="hint" hidden></p>
       </form>
 
       <p id="done" class="message done" role="status" hidden></p>
 
-      <a id="settings" class="settings" href="options.html" data-i18n="openSettings"></a>
+      <details id="forgot" class="forgot">
+        <summary data-i18n="forgotSummary"></summary>
+        <p data-i18n="forgotBody"></p>
+      </details>
+
+      <div class="aside">
+        <a id="settings" class="settings" href="options.html" data-i18n="openSettings"></a>
+        <p class="hint" data-i18n="lockSettingsHint"></p>
+      </div>
     </main>
     <script type="module" src="./main.ts"></script>
   </body>

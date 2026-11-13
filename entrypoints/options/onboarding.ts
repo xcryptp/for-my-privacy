@@ -1,4 +1,4 @@
-import { normalizeDomain } from '../../src/lib/domain';
+import { normalizeDomain, typedHost } from '../../src/lib/registrable-domain';
 import { originPatterns } from '../../src/lib/origins';
 
 // Pure helpers of the first-run onboarding (no DOM, no browser API), so they can be unit tested.
@@ -11,8 +11,30 @@ export const REPO_URL = 'https://github.com/xcryptp/for-my-privacy';
 
 export const PRIVACY_URL = `${REPO_URL}/blob/main/PRIVACY.md`;
 
-/** The README section that lists what the extension cannot stop (anchor of the English heading). */
-export const LEARN_MORE_URL = `${REPO_URL}#what-it-protects-and-what-it-does-not`;
+export type ReadmeLang = 'en' | 'ko' | 'ja';
+
+/** The README language for a browser UI language such as `ko`, `ko-KR` or `ja`; anything else is English. */
+export function readmeLang(uiLanguage: string): ReadmeLang {
+  const base = uiLanguage.toLowerCase().split(/[-_]/)[0];
+  return base === 'ko' || base === 'ja' ? base : 'en';
+}
+
+// The README file of each language and the anchor of its "what it protects and what it does not" heading.
+const LIMITS_SECTION: Record<ReadmeLang, { file: string; anchor: string }> = {
+  en: { file: 'README.md', anchor: 'what-it-protects-and-what-it-does-not' },
+  ko: { file: 'README.ko.md', anchor: '무엇을-막고-무엇은-막지-못하나' },
+  ja: { file: 'README.ja.md', anchor: '何を守り何を守れないか' },
+};
+
+/** The README section that lists what the extension cannot stop, in the language of the page. */
+export function limitsUrl(uiLanguage: string): string {
+  const { file, anchor } = LIMITS_SECTION[readmeLang(uiLanguage)];
+  const base = file === 'README.md' ? REPO_URL : `${REPO_URL}/blob/main/${file}`;
+  return `${base}#${encodeURI(anchor)}`;
+}
+
+/** The English section, for places that do not know the language. */
+export const LEARN_MORE_URL = limitsUrl('en');
 
 /** Sites offered as one-tap choices on the "Choose sites" step, in stored form. */
 export const PRESET_SITES: readonly string[] = ['instagram.com', 'facebook.com', 'x.com', 'tiktok.com', 'youtube.com'];
@@ -53,18 +75,49 @@ export function selectedOrigins(domains: readonly string[]): string[] {
   return [...new Set(domains.flatMap(originPatterns))];
 }
 
-/** The line shown under a listed site: it makes visible that subdomains of every depth are locked too. */
-export function wildcardForms(domain: string): string {
-  return `*.${domain} · *.*.${domain}`;
+/** The notation under a listed site, for people who know it: the site and everything under it. */
+export function wildcardForm(domain: string): string {
+  return `*.${domain}`;
 }
 
-export type Preview = { kind: 'empty' } | { kind: 'ok'; domain: string } | { kind: 'invalid' };
+export type Preview =
+  | { kind: 'empty' }
+  /** `typed` is set when the address typed was deeper than the domain that gets locked (m.blog.naver.com → naver.com). */
+  | { kind: 'ok'; domain: string; typed?: string }
+  | { kind: 'invalid' };
 
 /** What a site field's current text will lock, for the live "Will lock" line while typing. */
 export function previewFor(raw: string): Preview {
   if (raw.trim() === '') return { kind: 'empty' };
   const domain = normalizeDomain(raw);
-  return domain ? { kind: 'ok', domain } : { kind: 'invalid' };
+  if (!domain) return { kind: 'invalid' };
+  const typed = typedHost(raw);
+  return typed && typed !== domain ? { kind: 'ok', domain, typed } : { kind: 'ok', domain };
+}
+
+export type TypedSite =
+  | { kind: 'none' }
+  | { kind: 'invalid' }
+  | { kind: 'added'; domain: string; chips: string[]; selected: string[] };
+
+/**
+ * A site typed in the custom field but not yet added is added when the person moves on: the same
+ * rule as the Add button. Empty text is nothing to add; text that is not a site stays put with an error.
+ */
+export function commitTypedSite(chips: readonly string[], selected: readonly string[], typed: string): TypedSite {
+  if (typed.trim() === '') return { kind: 'none' };
+  const added = addCustomSite(chips, selected, typed);
+  return added ? { kind: 'added', ...added } : { kind: 'invalid' };
+}
+
+/** "Skip" while nothing is chosen and nothing is typed, "Next" otherwise. */
+export function nextLabelKey(chosenCount: number, typed: string): 'skipButton' | 'nextButton' {
+  return chosenCount === 0 && typed.trim() === '' ? 'skipButton' : 'nextButton';
+}
+
+/** Which tip the settings show after the first run: only a saved site makes "your sites are locked" true. */
+export function doneTipKey(savedSites: number): 'onboardingDoneTip' | 'onboardingDoneTipEmpty' {
+  return savedSites > 0 ? 'onboardingDoneTip' : 'onboardingDoneTipEmpty';
 }
 
 /** Storage key of the onboarding progress; removed on Finish. */

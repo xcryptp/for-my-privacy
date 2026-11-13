@@ -224,6 +224,19 @@ h2[tabindex='-1']:focus {
   display: none;
 }
 
+/* A warning the person must read before going on (the password cannot be recovered). */
+.warning {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--warn-border);
+  border-inline-start-width: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
 .tip {
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--success);
@@ -254,6 +267,10 @@ h2[tabindex='-1']:focus {
   background: var(--danger-bg);
 }
 
+.card .notice {
+  box-shadow: none;
+}
+
 .notice button {
   align-self: flex-start;
 }
@@ -271,6 +288,23 @@ h2 {
 .notice .muted,
 .notice p {
   color: var(--text);
+}
+
+/* A button that reads as a link: the way out of a flow, not an action to press. */
+button.linklike {
+  align-self: center;
+  min-height: var(--tap);
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  color: var(--accent);
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+button.linklike:hover:not(:disabled) {
+  background: transparent;
+  color: var(--accent-hover);
 }
 
 /* Secondary buttons: outlined, so the one filled button of a section stays the main action. */
@@ -397,11 +431,16 @@ button.secondary:hover:not(:disabled) {
   font-weight: 600;
 }
 
-/* The wildcard forms under a site: every subdomain, at any depth, is locked with it. */
+/* The plain sentence under a site: every address under it, at any depth, is locked with it. */
 .domains .wild {
   color: var(--text-muted);
   font-size: 0.875rem;
   overflow-wrap: anywhere;
+}
+
+/* The `*.example.com` notation, for people who know it; the plain sentence before it comes first. */
+.domains .wild-form {
+  white-space: nowrap;
 }
 
 .domains button {
@@ -485,6 +524,26 @@ input.narrow {
   transform: translateX(-1.125rem);
 }
 
+/* A radio choice: the same tap height and spacing as a switch. */
+.radio {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--tap);
+  margin: 0;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.radio input {
+  flex: none;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 .hint {
   margin-top: calc(var(--space-1) * -1);
   padding-inline-start: calc(2.75rem + var(--space-3));
@@ -513,6 +572,8 @@ input.narrow {
 
 /* Korean breaks between words, not inside them; Japanese has no spaces and keeps the default. */
 :lang(ko) .muted,
+:lang(ko) .warning,
+:lang(ko) .radio span,
 :lang(ko) .message,
 :lang(ko) label,
 :lang(ko) .switch span,
