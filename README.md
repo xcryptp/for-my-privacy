@@ -11,7 +11,7 @@
 
 **Put a password on the sites you choose, and lock them again when you step away.**
 
-<img src="docs/assets/screenshot-lock.png" alt="The lock screen shown instead of a locked site" width="49%"> <img src="docs/assets/screenshot-options.png" alt="The settings page with the list of locked sites" width="49%">
+<img src="docs/assets/screenshot-lock.en.png" alt="The lock screen shown instead of a locked site" width="49%"> <img src="docs/assets/screenshot-options.en.png" alt="The settings page with the list of locked sites" width="49%">
 
 </div>
 
@@ -70,10 +70,10 @@ At install Chrome says the extension can **"Block content on any page"**. That i
 
 ## Use
 
-1. **Add a site.** Open Settings (on the lock screen click **Settings**, or right-click the extension icon and choose **Options**). Type a site such as `instagram.com` and click **Add**. Chrome asks to allow access to that one site; allow it.
-2. **Visit it.** The lock screen appears. Enter your password to open the site.
-3. **Lock it yourself.** Click **Lock now** in Settings.
-4. **Choose when it locks again.** In Settings set the idle time (1-60 minutes, default 5), and switch screen-lock locking or the extensions-page guard on or off.
+1. **Add a site.** Open Settings (on the lock screen click **Settings**, or right-click the extension icon and choose **Options**). Under **Locked sites**, type a site such as `instagram.com` and click **Add**. Chrome asks to allow access to that one site; allow it.
+2. **Visit it.** The lock screen appears. Enter your password and click **Unlock** to open the site.
+3. **Lock it yourself.** Click **Lock now** at the top of the settings page.
+4. **Choose when it locks again.** Under **Lock again automatically**, set **Minutes without keyboard or mouse input** (1-60, default 5), and switch **Lock when the screen locks** and **Ask for the password before Chrome's extensions page opens** on or off. The second switch is not in the `-noguard` build.
 
 If you forget the password, remove the extension and install it again. That erases the password and the site list.
 
