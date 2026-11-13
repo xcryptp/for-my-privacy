@@ -5,7 +5,8 @@
 // It builds nothing itself. It loads `.output/chrome-mv3` the way tests/e2e/fixtures.ts does,
 // creates a demo password and the demo site `instagram.com`, and saves 1280x800 light-mode PNGs
 // to docs/assets/ for each README language: screenshot-lock.<lang>.png and
-// screenshot-options.<lang>.png with <lang> = en, ko, ja (one browser launch per language).
+// screenshot-options.<lang>.png (the settings page on its Sites section, with the demo site listed)
+// with <lang> = en, ko, ja (one browser launch per language).
 // The demo site is never visited: the host name is mapped to a local server with
 // --host-resolver-rules, so no request leaves this machine.
 //
@@ -118,9 +119,10 @@ async function shoot(lang: Language): Promise<void> {
       { password: DEMO_PASSWORD, domain: DEMO_DOMAIN },
     );
 
-    // 1. Settings page (unlocked, with the demo site listed).
-    await page.goto(`${base}/options.html`);
-    await page.getByText(DEMO_DOMAIN, { exact: false }).first().waitFor({ timeout: 10_000 });
+    // 1. Settings page, Sites section (unlocked, with the demo site listed). The page also holds the
+    // hidden first-run steps, which name the same site on a chip, so wait for the visible list row.
+    await page.goto(`${base}/options.html#sites`);
+    await page.locator('#domains li', { hasText: DEMO_DOMAIN }).first().waitFor({ timeout: 10_000 });
     await settle(page);
     // The store build has no site access for the demo domain (Chrome asks for it with a click, which
     // a script cannot give), so the page shows its "Site access was removed" banner. The banner is

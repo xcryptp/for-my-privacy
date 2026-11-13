@@ -1,6 +1,6 @@
 # Manual checks
 
-Some behaviour cannot be tested automatically: the automated tests run on macOS with a bundled Chromium, and neither Windows nor a real screen lock is available to them. Run this list before each release, on both macOS and Windows. Use the release zip (loaded unpacked) and a few throwaway sites such as `example.com`.
+Some behaviour cannot be tested automatically: the automated tests run on macOS with a bundled Chromium, and none of Windows, a real screen lock, a real Chrome restart or a real install's permission warnings is available to them. Run this list before each release, on both macOS and Windows. Use the release zip (loaded unpacked) and a few throwaway sites such as `example.com`.
 
 Setup for every check: create a password, add a site, unlock it, open the site in a tab, then do the step below.
 
@@ -49,6 +49,28 @@ Use the store ID of the published extension in place of `<EXTENSION_ID>`. Do thi
 | 17 | Set Chrome's "On startup" to "Continue where you left off". With the site unlocked and open in a tab, quit Chrome completely and start it again. The restored tab shows the lock screen, not the site. | [ ] | [ ] |
 | 18 | With the site unlocked, close its tab, then click **Lock now**. Reopen the closed tab (Ctrl-Shift-T; macOS: Command-Shift-T). It lands on the lock screen. | [ ] | [ ] |
 | 19 | When creating the password, changing it and unlocking, note whether Chrome offers to save the password or suggests a generated one, and what it does if you accept. If Chrome saves it to Google Password Manager, the password would leave this device through Chrome's own sync; record exactly what Chrome did. | [ ] | [ ] |
+
+## Quick lock, settings and unlock scope
+
+| # | Check | macOS | Windows |
+| --- | --- | --- | --- |
+| 20 | With a site unlocked, click the toolbar icon. The popup shows **Lock now**, **Open settings** and the line "Shortcut: ..." with the key that is set. Click **Lock now**: the popup says "Locked" and closes, and the site tab shows the lock screen. On a fresh profile before the password exists, the popup says to finish the setup in Settings and **Lock now** is disabled. | [ ] | [ ] |
+| 21 | Press the shortcut (Alt+Shift+L; on macOS the popup should show it as Option+Shift+L) with a site unlocked: the site locks as in check 20, with no password. Open `chrome://extensions/shortcuts`, change the key, and confirm the new key works and the popup shows it. If another extension already uses Alt+Shift+L, confirm the popup shows no shortcut instead of a wrong one. | [ ] | [ ] |
+| 22 | In Security choose "Unlock only that site". With two locked sites A and B, the sites lock again, the settings stay open and the page says "Saved. Your sites are locked again." Unlock A: A opens, B still shows its lock screen, and A's lock screen said "This unlocks only A and every address under it." Open `chrome://extensions`: lock screen. Unlocking on A's lock screen does not open the extensions page; unlocking on the extensions lock screen does, until the next lock. | [ ] | [ ] |
+| 23 | Switch back to "Unlock all locked sites together". One unlock opens A, B and the extensions page. Then lock and confirm the settings are locked too: opening Settings asks for the password, and unlocking the settings leaves every site locked. Unlocking a site leaves the settings locked. | [ ] | [ ] |
+| 24 | On a throwaway profile, use the "Forgot your password?" note on the lock screen: click the puzzle-piece icon, the three-dot menu next to the extension, "Remove from Chrome", then install again. The password and the site list are gone and setup starts over. | [ ] | [ ] |
+| 25 | Open a locked site with a long path and query. On the lock screen the address bar shows only the extension's `lock.html#t=` and a code, never the page address, and the lock screen names only the site. | [ ] | [ ] |
+| 26 | In Settings, Sites, paste a full link to a page deep under a site (for example `https://a.b.example.com/page?x=1`): the line under the box says all of `example.com` will lock. Paste `https://someone.github.io/`: only `someone.github.io` locks, not other `github.io` sites. | [ ] | [ ] |
+
+## Service workers, frames and permission warnings
+
+| # | Check | macOS | Windows |
+| --- | --- | --- | --- |
+| 27 | Lock a real site with its own service worker (for example `youtube.com` or `instagram.com`). Unlock, browse several of its pages including one on a subdomain, and leave the tab open. Quit Chrome completely while unlocked (macOS: Command-Q; Windows: close all windows and exit from the tray icon) and start it again. Before visiting the site, open `chrome://serviceworker-internals`: the locked site's registrations are gone. Then visit the site: lock screen, never its content. With "Continue where you left off", the restored tab shows the lock screen; note whether the site's page flashes first. | [ ] | [ ] |
+| 28 | Serve a small page over `http://localhost` that embeds a locked site in an iframe. While unlocked, the frame shows the site. Click **Lock now**: the page reloads and the frame no longer shows the site (blocked page). Back and Forward in that tab never show the site's content. Repeat with a text field half filled in so Chrome asks "Leave site?": the tab is replaced and not left showing the frame. | [ ] | [ ] |
+| 29 | Install the release zip on a fresh profile and open the extension's permissions (`chrome://extensions`, Details). Chrome lists "Block content on any page" and "Read your browsing history" and nothing else besides site access (on click). `browsingData` must not add a line and `webNavigation` must not add a second history line. If Chrome shows anything else, fix the README, `PRIVACY.md` and `docs/store-listing.md`. Do the same on the Web Store draft's permission preview once it exists. | [ ] | [ ] |
+| 30 | In the toolbar extension menu set a locked site's site access to "On click" or remove it, for a site that has a service worker. Lock and visit the site: the lock screen appears, Chrome's blocked page may flash first, and the site's content never shows. | [ ] | [ ] |
+| 31 | Allow notifications for a real site that sends web-push messages, unlock it and use it for a moment, then click **Lock now**. Visit it again while still locked: lock screen. Confirm no push notification from the site arrives while it is locked, and note whether notifications return after you unlock and visit the site again (the README says they stop until then). | [ ] | [ ] |
 
 ## Record
 
