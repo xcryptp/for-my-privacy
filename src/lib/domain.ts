@@ -1,5 +1,7 @@
 const SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
 
+const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
 const RELATED: Record<string, string[]> = {
   'instagram.com': ['instagr.am'],
   'facebook.com': ['fb.com', 'messenger.com'],
@@ -16,7 +18,7 @@ const RELATED: Record<string, string[]> = {
  */
 export function normalizeDomain(input: string): string | null {
   let value = input.trim();
-  if (value.startsWith('*.')) value = value.slice(2);
+  value = value.replace(/^[*.]+/, '');
   if (!value) return null;
   if (!SCHEME.test(value)) value = `http://${value}`;
 
@@ -31,7 +33,10 @@ export function normalizeDomain(input: string): string | null {
   let host = url.hostname;
   if (host.endsWith('.')) host = host.slice(0, -1);
   if (host.startsWith('www.')) host = host.slice(4);
-  if (!host.includes('.') || host.startsWith('.') || host.endsWith('.')) return null;
+  const labels = host.split('.');
+  if (labels.length < 2 || !labels.every((label) => LABEL.test(label))) return null;
+  // Sites are locked by name: an all-numeric last label is an IPv4 literal (IPv6 fails LABEL above).
+  if (/^\d+$/.test(labels[labels.length - 1] ?? '')) return null;
   return host;
 }
 

@@ -12,6 +12,24 @@ describe('normalizeDomain', () => {
     expect(normalizeDomain('instagram.com.')).toBe('instagram.com');
   });
 
+  it('strips any run of leading wildcard and dot characters', () => {
+    expect(normalizeDomain('*instagram.com')).toBe('instagram.com');
+    expect(normalizeDomain('**.instagram.com')).toBe('instagram.com');
+    expect(normalizeDomain('*.*.instagram.com')).toBe('instagram.com');
+  });
+
+  it('rejects hosts with characters that cannot be in a hostname', () => {
+    for (const bad of ['a.*.com', 'ex!ample.com', 'ex_ample.com', '-a.com', 'a-.com']) {
+      expect(normalizeDomain(bad)).toBeNull();
+    }
+  });
+
+  it('rejects IP literals', () => {
+    for (const bad of ['192.168.0.1', '127.1', '[::1]', 'http://[::1]/x']) {
+      expect(normalizeDomain(bad)).toBeNull();
+    }
+  });
+
   it('keeps a subdomain as given', () => {
     expect(normalizeDomain('m.instagram.com')).toBe('m.instagram.com');
   });
