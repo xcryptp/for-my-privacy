@@ -6,8 +6,7 @@ export const RULE_REDIRECT = 1;
 export const RULE_FALLBACK_BLOCK = 2;
 export const RULE_UNLOCK = 100;
 
-// The cast is needed until the lock page entrypoint exists and WXT types its path.
-const lockPageBase = () => browser.runtime.getURL('/lock.html' as never);
+const lockPageBase = () => browser.runtime.getURL('/lock.html');
 
 /**
  * Dynamic rules for the locked domains. `requestDomains` matches each domain and all its

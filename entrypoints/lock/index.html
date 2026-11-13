@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title data-i18n="lockTitle">For My Privacy</title>
+    <link rel="stylesheet" href="../../src/ui/base.css" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="card">
+      <svg class="icon" viewBox="0 0 24 24" width="48" height="48" aria-hidden="true" focusable="false">
+        <rect x="4.5" y="10.5" width="15" height="10" rx="2.5" fill="currentColor" />
+        <path
+          d="M8 10.5V8a4 4 0 0 1 8 0v2.5"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+        />
+      </svg>
+      <h1 data-i18n="lockTitle"></h1>
+      <p id="subtitle" class="subtitle" hidden></p>
+
+      <form id="form" class="form" autocomplete="off">
+        <label for="password" data-i18n="passwordLabel"></label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+        <p id="error" class="message error" role="alert"></p>
+        <button id="submit" type="submit" data-i18n="unlockButton"></button>
+      </form>
+
+      <p id="done" class="message done" role="status" hidden></p>
+
+      <a id="settings" class="settings" href="options.html" data-i18n="openSettings"></a>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
