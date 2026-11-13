@@ -101,3 +101,14 @@ test('the popup fits 320 px wide in light and dark', async ({ context, extension
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   }
 });
+
+test('a popup whose extension gives no answer says to reload the extension', async ({ context, sw, extensionId }) => {
+  await setUp(sw, ['example.test']);
+  const page = await context.newPage();
+  await openPopup(page, extensionId);
+  await page.evaluate(() => {
+    chrome.runtime.sendMessage = (async () => undefined) as never;
+  });
+  await page.getByRole('button', { name: await msg(sw, 'lockNowButton') }).click();
+  await expect(page.getByRole('status')).toHaveText(await msg(sw, 'extensionUpdated'));
+});

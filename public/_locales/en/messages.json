@@ -310,5 +310,8 @@
   },
   "popupSomeUnlocked": {
     "message": "Some sites are unlocked"
+  },
+  "extensionUpdated": {
+    "message": "The extension did not answer. It may have been updated: reload it at chrome://extensions (or reload this page) and try again."
   }
 }

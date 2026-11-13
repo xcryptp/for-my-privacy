@@ -1480,7 +1480,7 @@ async function handle(req: Request, sender: Sender): Promise<Response | TargetRe
       // One ruleQueue step: the settings, the rule change, this tab's navigation and the other
       // lock tabs all see the same state, and no relock can run in between. `opened`: this tab
       // was sent to its page (else the lock page says what to do).
-      const opened = await ruleQueue(async () => {
+      const { sent: opened, url: openedUrl } = await ruleQueue(async () => {
         // The frame guard counts strikes from one relock or unlock to the next.
         frameGuarded.clear();
         let sent = false;
@@ -1512,9 +1512,10 @@ async function handle(req: Request, sender: Sender): Promise<Response | TargetRe
           if (token !== null) await deleteTokens([token]);
         }
         await returnLockTabs(settings, unlock, tabId);
-        return sent;
+        return { sent, url: sent && url !== null ? url : undefined };
       });
-      return { ok: true, state: await getState(), opened };
+      // `url`: the lock page may also go there itself, should its own navigation come late.
+      return { ok: true, state: await getState(), opened, ...(openedUrl !== undefined ? { url: openedUrl } : {}) };
     }
 
     case 'unlockSettings': {

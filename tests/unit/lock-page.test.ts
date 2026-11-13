@@ -6,6 +6,8 @@ import {
   parseReturnTo,
   parseToken,
   scopeHintText,
+  selfReturnUrl,
+  SELF_RETURN_MS,
   titleKey,
   wrongPasswordText,
 } from '../../entrypoints/lock/main';
@@ -176,5 +178,26 @@ describe('afterUnlockText', () => {
   it("never claims an unlock that opened nothing in 'site' scope", () => {
     expect(afterUnlockText(false, 'site', tr)).toBe('unlockNothingToOpen()');
     expect(afterUnlockText(false, 'all', tr)).toBe('unlockedNoReturn()');
+  });
+});
+
+describe('selfReturnUrl', () => {
+  it('names the page the worker opened, for web addresses only', () => {
+    expect(selfReturnUrl({ opened: true, url: 'https://example.test/p?q=1#x' })).toBe('https://example.test/p?q=1#x');
+    expect(selfReturnUrl({ opened: true, url: 'http://example.test/' })).toBe('http://example.test/');
+  });
+
+  it('is undefined when nothing was opened, there is no address, or it is not a web address', () => {
+    expect(selfReturnUrl({ opened: false, url: 'https://example.test/' })).toBeUndefined();
+    expect(selfReturnUrl({ opened: true })).toBeUndefined();
+    expect(selfReturnUrl({})).toBeUndefined();
+    expect(selfReturnUrl({ opened: true, url: 'chrome://extensions/' })).toBeUndefined();
+    expect(selfReturnUrl({ opened: true, url: 'javascript:alert(1)' })).toBeUndefined();
+    expect(selfReturnUrl({ opened: true, url: 'file:///etc/passwd' })).toBeUndefined();
+    expect(selfReturnUrl({ opened: true, url: 'not a url' })).toBeUndefined();
+  });
+
+  it('waits well under a second before going there itself', () => {
+    expect(SELF_RETURN_MS).toBeLessThanOrEqual(500);
   });
 });

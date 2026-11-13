@@ -242,6 +242,8 @@ The full list, and what helps for each, is in the README: [What it protects and 
 
 **The unlock button is greyed out with a countdown.** There were 5 wrong tries. Wait for the countdown to end; it cannot be skipped. The same wait applies to the settings and Change password.
 
+**The unlock does nothing, or a message says the extension was updated.** You replaced the extension's folder (or built again) while Chrome still had the old version loaded. Open `chrome://extensions`, click the reload icon on For My Privacy, then reload the page and try again.
+
 **Chrome says the extension cannot be loaded after I moved or deleted the folder.** Build again if needed and load the folder with **Load unpacked** again. Chrome may treat it as a new extension, so the first-run setup can start again.
 
 **Chrome shows a notice about developer-mode extensions at start.** That is normal for extensions loaded unpacked.

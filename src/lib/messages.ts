@@ -44,8 +44,9 @@ export type ErrorCode =
 /**
  * `opened` (unlock only): the unlock sent the lock page's tab to its page. False when there was
  * nothing to open (no target for this tab); in 'site' scope nothing was unlocked then either.
+ * `url` (with `opened`): the page the tab was sent to, so the lock page can also go there itself.
  */
-export type Response = { ok: true; state: State; opened?: boolean } | { ok: false; error: ErrorCode; state: State };
+export type Response = { ok: true; state: State; opened?: boolean; url?: string } | { ok: false; error: ErrorCode; state: State };
 
 /**
  * What an unlock on a lock page opens: a site (`domain` is its listed domain, the one a 'site'
@@ -93,8 +94,34 @@ export function isRequest(value: unknown): value is Request {
   }
 }
 
+/**
+ * The service worker cannot be reached: it gave no answer (an older build that does not know the
+ * request), or this page outlived the extension it belongs to (it was reloaded or updated).
+ */
+export class ExtensionUnavailableError extends Error {
+  constructor(message = 'The extension did not answer') {
+    super(message);
+    this.name = 'ExtensionUnavailableError';
+  }
+}
+
+export function isUnavailable(err: unknown): boolean {
+  return err instanceof ExtensionUnavailableError;
+}
+
+// What Chrome says when a page's extension is gone or its worker has no listener.
+const GONE = /context invalidated|receiving end does not exist|message port closed|extension.*(reload|updated)/i;
+
 export async function send<R extends Request>(req: R): Promise<ResponseFor<R>> {
-  const res = (await browser.runtime.sendMessage(req)) as ResponseFor<R> | undefined;
-  if (!res) throw new Error('No response from the service worker');
+  // `runtime.id` reads undefined once the extension this page belongs to was reloaded or updated.
+  if (!browser.runtime?.id) throw new ExtensionUnavailableError('Extension context invalidated');
+  let res: ResponseFor<R> | undefined;
+  try {
+    res = (await browser.runtime.sendMessage(req)) as ResponseFor<R> | undefined;
+  } catch (err) {
+    if (err instanceof Error && GONE.test(err.message)) throw new ExtensionUnavailableError(err.message);
+    throw err;
+  }
+  if (!res) throw new ExtensionUnavailableError('No response from the service worker');
   return res;
 }

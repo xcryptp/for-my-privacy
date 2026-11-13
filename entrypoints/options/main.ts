@@ -2,7 +2,7 @@ import { browser } from 'wxt/browser';
 import { suggestRelated } from '../../src/lib/domain';
 import { SETTINGS_GUARD_BUILD } from '../../src/lib/flags';
 import { applyI18n, t } from '../../src/lib/i18n';
-import { send, type ErrorCode, type State } from '../../src/lib/messages';
+import { isUnavailable, send, type ErrorCode, type State } from '../../src/lib/messages';
 import { originPatterns, releasableOrigins } from '../../src/lib/origins';
 import { validatePassword } from '../../src/lib/password';
 import { normalizeDomain } from '../../src/lib/registrable-domain';
@@ -464,6 +464,7 @@ function init(): void {
       await applyState((await send({ type: 'getState' })).state);
     } catch (err) {
       console.warn('getState failed', err);
+      if (isUnavailable(err)) unlockError.textContent = t('extensionUpdated');
     }
   }
 
@@ -722,6 +723,7 @@ function init(): void {
         }
       } catch (err) {
         console.warn('setup failed', err);
+        if (isUnavailable(err)) setupError.textContent = t('extensionUpdated');
       } finally {
         setupSubmit.disabled = false;
       }
@@ -747,7 +749,9 @@ function init(): void {
         showRejection(unlockError, unlockWait, res.error, res.state);
         if (!unlockWait.active) unlockPassword.focus();
       } catch (err) {
+        unlockPassword.value = '';
         console.warn('unlock failed', err);
+        if (isUnavailable(err)) unlockError.textContent = t('extensionUpdated');
       } finally {
         unlocking = false;
         if (!unlockWait.active) unlockSubmit.disabled = false;

@@ -340,7 +340,7 @@ describe('handleMessage: unlock', () => {
     const T7 = '7'.padStart(32, '0');
     await browser.storage.session.set({ [`lockTarget:${T7}`]: { url: 'http://example.test/', tabId: 7, source: 'engine' } });
     const res = await handleMessage({ type: 'unlock', password: PW, token: T7 }, { tab: { id: 7 }, frameId: 0 });
-    expect(res).toMatchObject({ ok: true, opened: true, state: { unlocked: true } });
+    expect(res).toMatchObject({ ok: true, opened: true, url: 'http://example.test/', state: { unlocked: true } });
     expect(update.mock.calls).toEqual([[7, { url: 'http://example.test/' }]]);
   });
 });
@@ -2440,9 +2440,10 @@ describe('final review #2 fix wave (FW1-FW6)', () => {
     await saveSettings({ domains: ['example.test'], unlockScope: 'site' });
     const none = await handleMessage({ type: 'unlock', password: PW }, { tab: { id: 7 }, frameId: 0 });
     expect(none).toMatchObject({ ok: true, opened: false, state: { unlocked: false } });
+    expect(none).not.toHaveProperty('url');
     await browser.storage.session.set({ [`lockTarget:${T(7)}`]: { url: 'https://example.test/p', tabId: 7, source: 'engine' } });
     const some = await handleMessage({ type: 'unlock', password: PW, token: T(7) }, { tab: { id: 7 }, frameId: 0 });
-    expect(some).toMatchObject({ ok: true, opened: true, state: { unlockedDomains: ['example.test'] } });
+    expect(some).toMatchObject({ ok: true, opened: true, url: 'https://example.test/p', state: { unlockedDomains: ['example.test'] } });
   });
 
   // ---- FW4 ----
@@ -2577,6 +2578,7 @@ describe('final review #2 fix wave (FW1-FW6)', () => {
       frameId: 0,
     });
     expect(res).toMatchObject({ ok: true, opened: false });
+    expect(res).not.toHaveProperty('url');
     expect(update).not.toHaveBeenCalled();
   });
 

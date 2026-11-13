@@ -310,5 +310,8 @@
   },
   "popupSomeUnlocked": {
     "message": "잠금이 풀린 사이트가 있습니다"
+  },
+  "extensionUpdated": {
+    "message": "확장 프로그램이 응답하지 않습니다. 업데이트되었을 수 있으니 chrome://extensions에서 확장 프로그램을 다시 불러오거나 이 페이지를 새로고침한 뒤 다시 시도하세요."
   }
 }

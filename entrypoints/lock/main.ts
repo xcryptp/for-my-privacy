@@ -1,6 +1,6 @@
 import { browser } from 'wxt/browser';
 import { applyI18n, t } from '../../src/lib/i18n';
-import { send, type TargetResponse } from '../../src/lib/messages';
+import { isUnavailable, send, type Response, type TargetResponse } from '../../src/lib/messages';
 import { hostMatches } from '../../src/lib/domain';
 import { getSettings, type Settings, type UnlockScope } from '../../src/lib/settings';
 import { createCountdown, formatCountdown } from '../../src/ui/countdown';
@@ -64,14 +64,32 @@ export function afterUnlockText(opened: boolean, scope: UnlockScope, tr: typeof 
   return tr(scope === 'site' ? 'unlockNothingToOpen' : 'unlockedNoReturn');
 }
 
+/**
+ * Where this page sends itself after a correct password: the page the worker says it opened, but
+ * only a web address (`url` is what the worker already put the tab on, so this is a backup for
+ * a navigation that comes late). The extensions page is only ever opened by the worker.
+ */
+export function selfReturnUrl(res: Pick<Extract<Response, { ok: true }>, 'opened' | 'url'>): string | undefined {
+  if (res.opened !== true || !res.url) return undefined;
+  try {
+    const { protocol } = new URL(res.url);
+    return protocol === 'http:' || protocol === 'https:' ? res.url : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function byId<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
   if (!el) throw new Error(`Missing #${id}`);
   return el as T;
 }
 
-// How long a lock page waits for the worker to send it back before it says the site can be opened again.
-const NO_RETURN_MS = 4000;
+// If the worker's own navigation has not taken this page away by now, the page goes to the site itself.
+export const SELF_RETURN_MS = 300;
+// How long a lock page waits for the worker to send it back (when it named no page to go to
+// itself) before it says the site can be opened again.
+const NO_RETURN_MS = 2000;
 
 function init(): void {
   const form = byId<HTMLFormElement>('form');
@@ -90,6 +108,8 @@ function init(): void {
   let host: string | undefined;
   let busy = false;
   let unlocked = false;
+  // The worker did not know the lock page's first request: an older build is still running.
+  let workerStale = false;
 
   applyI18n();
   document.documentElement.lang = browser.i18n.getUILanguage();
@@ -126,6 +146,10 @@ function init(): void {
       }
     } catch (err) {
       console.warn('target lookup failed', err);
+      if (isUnavailable(err)) {
+        workerStale = true;
+        error.textContent = t('extensionUpdated');
+      }
     } finally {
       // Whatever happened, the raw address does not stay in the address bar.
       if (parseReturnTo(location.hash) !== undefined) {
@@ -192,7 +216,8 @@ function init(): void {
     if (busy || submit.disabled) return;
     busy = true;
     submit.disabled = true;
-    showError('');
+    // Keep "the extension was updated" in view until the worker answers this request.
+    if (!workerStale) showError('');
     try {
       await targetReady; // the token comes from the claim, which may still be on its way
       await hintReady; // and what an unlock opens comes from the setting
@@ -200,11 +225,20 @@ function init(): void {
       input.value = '';
       if (res.ok) {
         unlocked = true;
-        // The worker says whether it sent this tab to its page. If it did but the tab is still
-        // here after a moment (the navigation failed), say what to do. The extensions page the
-        // guard sent here is opened by the worker: never claim there is nothing to open.
+        // The worker says whether it sent this tab to its page. Normally the tab is gone before
+        // anything here runs. If it is still here after a moment, go to the page ourselves; with
+        // no web address to go to (the extensions page the guard sent here is opened by the
+        // worker alone: never claim there is nothing to open), say what to do after a while.
         const opened = res.opened === true;
+        const url = selfReturnUrl(res);
         if (!opened) showAfterUnlock(false);
+        else if (url !== undefined) {
+          const timer = setTimeout(() => location.replace(url), SELF_RETURN_MS);
+          // Once the worker's navigation has started, do not start the same load a second time.
+          const cancel = () => clearTimeout(timer);
+          addEventListener('beforeunload', cancel, { once: true });
+          addEventListener('pagehide', cancel, { once: true });
+        }
         else if (kind !== 'extensions') setTimeout(() => showAfterUnlock(false), NO_RETURN_MS);
         return;
       }
@@ -215,6 +249,7 @@ function init(): void {
     } catch (err) {
       input.value = '';
       console.warn('unlock failed', err);
+      if (isUnavailable(err)) showError(t('extensionUpdated'));
     } finally {
       busy = false;
       // Stay disabled while a wait runs or the tab is being sent back to the site.
@@ -230,7 +265,10 @@ function init(): void {
     .then((res) => {
       if (res.state.waitMs > 0) countdown.start(res.state.waitMs);
     })
-    .catch((err) => console.warn('getState failed', err));
+    .catch((err) => {
+      console.warn('getState failed', err);
+      if (isUnavailable(err)) error.textContent = t('extensionUpdated');
+    });
 }
 
 if (typeof document !== 'undefined') init();

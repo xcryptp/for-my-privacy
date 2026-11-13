@@ -1065,3 +1065,23 @@ test('a typed address deeper than the locked domain gets a warning-weight previe
   await ui.domainField.fill('example.test');
   await expect(preview).not.toHaveClass(/broader/);
 });
+
+test('a settings unlock whose extension gives no answer says to reload the extension and clears the field', async ({
+  context,
+  sw,
+  extensionId,
+}) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  await completeOnboarding(ui);
+  await ui.lockNow.click();
+  await expect(ui.unlock).toBeVisible();
+  // What an older worker does with a request it does not know: no answer.
+  await page.evaluate(() => {
+    chrome.runtime.sendMessage = (async () => undefined) as never;
+  });
+  await ui.password.fill(PW);
+  await ui.password.press('Enter');
+  await expect(ui.unlockError).toHaveText(await ui.text('extensionUpdated'));
+  await expect(ui.password).toHaveValue('');
+});

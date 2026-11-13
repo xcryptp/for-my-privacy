@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { browser } from 'wxt/browser';
 import { applyI18n, t } from '../../src/lib/i18n';
 
 type Messages = Record<string, { message: string }>;
@@ -49,8 +50,38 @@ describe('locale files', () => {
 });
 
 describe('t', () => {
-  it('falls back to the key when no i18n API is available', () => {
-    expect(t('lockTitle')).toBe('lockTitle');
+  afterEach(() => vi.restoreAllMocks());
+
+  it('falls back to the bundled English when no i18n API is available', () => {
+    expect(t('lockTitle')).toBe(en.lockTitle?.message);
+    expect(t('lockSubtitle', 'a.test')).toBe('Enter your password to open a.test.');
+  });
+
+  it('falls back to the bundled English when chrome.i18n has no entry for a key of this build', () => {
+    vi.spyOn(browser.i18n, 'getMessage').mockImplementation((() => '') as never);
+    expect(t('settingsUnlockHint')).toBe(en.settingsUnlockHint?.message);
+    expect(t('forgotSummary')).toBe(en.forgotSummary?.message);
+  });
+
+  it('uses chrome.i18n when it answers', () => {
+    vi.spyOn(browser.i18n, 'getMessage').mockImplementation((() => '잠김') as never);
+    expect(t('lockTitle')).toBe('잠김');
+  });
+
+  it('never shows a key name: an unknown key gives an empty string and a warning', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(t('noSuchKey')).toBe('');
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it('has an English message for every key the pages ask for', () => {
+    const pages = ['entrypoints/options/index.html', 'entrypoints/lock/index.html', 'entrypoints/popup/index.html'];
+    for (const page of pages) {
+      const html = readFileSync(resolve(__dirname, '../..', page), 'utf8');
+      for (const [, key] of html.matchAll(/data-i18n(?:-placeholder|-aria)?="([^"]+)"/g)) {
+        expect(en[key as string], `${page}: ${key}`).toBeDefined();
+      }
+    }
   });
 });
 

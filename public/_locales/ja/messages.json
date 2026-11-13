@@ -310,5 +310,8 @@
   },
   "popupSomeUnlocked": {
     "message": "ロックが解除されたサイトがあります"
+  },
+  "extensionUpdated": {
+    "message": "拡張機能が応答しません。更新された可能性があります。chrome://extensions で拡張機能を再読み込みするか、このページを再読み込みして、もう一度お試しください。"
   }
 }

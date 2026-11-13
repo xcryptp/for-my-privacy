@@ -1,6 +1,6 @@
 import { browser } from 'wxt/browser';
 import { applyI18n, t } from '../../src/lib/i18n';
-import { send } from '../../src/lib/messages';
+import { isUnavailable, send } from '../../src/lib/messages';
 import { LOCK_COMMAND, lockShortcut, shortcutOf } from '../../src/ui/shortcut';
 
 export { LOCK_COMMAND, shortcutOf };
@@ -61,6 +61,10 @@ function init(): void {
       } catch (err) {
         console.warn('lock now failed', err);
         lock.disabled = false;
+        if (isUnavailable(err)) {
+          status.classList.add('note');
+          status.textContent = t('extensionUpdated');
+        }
       } finally {
         busy = false;
       }
@@ -82,7 +86,13 @@ function init(): void {
       settings.classList.remove('secondary');
       settings.focus();
     })
-    .catch((err) => console.warn('getState failed', err));
+    .catch((err) => {
+      console.warn('getState failed', err);
+      if (isUnavailable(err)) {
+        status.classList.add('note');
+        status.textContent = t('extensionUpdated');
+      }
+    });
 
   void lockShortcut().then((keys) => {
     if (!keys) return;

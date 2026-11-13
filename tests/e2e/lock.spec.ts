@@ -364,3 +364,66 @@ test("in 'site' scope a lock page with nothing to open says so instead of \"Unlo
   )) as { state: { unlocked: boolean } };
   expect(state.state.unlocked).toBe(false);
 });
+
+test('after the right password the lock page is back on its site within a second', async ({
+  context,
+  sw,
+  extensionId,
+  origin,
+}) => {
+  await lockDomains(sw, ['example.test']);
+  const page = await context.newPage();
+  const target = origin('www.example.test') + '/p';
+  await visit(page, target);
+  await expect.poll(() => page.url()).toMatch(lockPageUrl(extensionId));
+  const ui = await lockUi(page, sw);
+  await ui.field.fill(PW);
+  const started = Date.now();
+  await ui.field.press('Enter');
+  await expect.poll(() => page.url(), { intervals: [25] }).toBe(target);
+  expect(Date.now() - started).toBeLessThan(1000);
+  await expect(page).toHaveTitle('ORIGINAL www.example.test');
+});
+
+test("the lock page goes to its site itself when the worker's own navigation does not happen", async ({
+  context,
+  sw,
+  extensionId,
+  origin,
+}) => {
+  await lockDomains(sw, ['example.test']);
+  // The worker unlocks and answers "opened" but its tab navigation is lost.
+  await sw.evaluate(() => {
+    chrome.tabs.update = (async () => ({})) as never;
+  });
+  const page = await context.newPage();
+  const target = origin('www.example.test') + '/late?x=1';
+  await visit(page, target);
+  await expect.poll(() => page.url()).toMatch(lockPageUrl(extensionId));
+  const ui = await lockUi(page, sw);
+  await ui.field.fill(PW);
+  const started = Date.now();
+  await ui.field.press('Enter');
+  await expect.poll(() => page.url(), { intervals: [25] }).toBe(target);
+  expect(Date.now() - started).toBeLessThan(1000);
+});
+
+test('a lock page whose extension gives no answer says to reload the extension and clears the field', async ({
+  context,
+  sw,
+  extensionId,
+  origin,
+}) => {
+  await lockDomains(sw, ['example.test']);
+  const page = await context.newPage();
+  const ui = await openLockPage(page, sw, extensionId, origin('example.test') + '/');
+  // What an older worker does with a request it does not know: no answer.
+  await page.evaluate(() => {
+    chrome.runtime.sendMessage = (async () => undefined) as never;
+  });
+  await ui.field.fill(PW);
+  await ui.field.press('Enter');
+  await expect(ui.alert).toHaveText(await ui.text('extensionUpdated'));
+  await expect(ui.field).toHaveValue('');
+  expect(page.url()).toContain('lock.html');
+});
