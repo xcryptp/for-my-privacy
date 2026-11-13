@@ -17,8 +17,13 @@ const BACKOFF_FREE_FAILURES = 5;
 const BACKOFF_BASE_MS = 30000;
 const BACKOFF_MAX_MS = 900000;
 
+// NFC so the same text typed or pasted as NFD (common for ko/ja on macOS) hashes identically.
+function normalizePassword(pw: string): string {
+  return pw.normalize('NFC');
+}
+
 export function validatePassword(pw: string): 'ok' | 'too_short' {
-  return pw.length >= MIN_PASSWORD_LENGTH ? 'ok' : 'too_short';
+  return normalizePassword(pw).length >= MIN_PASSWORD_LENGTH ? 'ok' : 'too_short';
 }
 
 function toBase64(bytes: Uint8Array): string {
@@ -43,7 +48,7 @@ async function derive(pw: string, salt: Uint8Array<ArrayBuffer>, iterations: num
 export async function createRecord(pw: string, iterations: number = PBKDF2_ITERATIONS): Promise<PasswordRecord> {
   if (validatePassword(pw) !== 'ok') throw new Error('too_short');
   const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
-  const hash = await derive(pw, salt, iterations);
+  const hash = await derive(normalizePassword(pw), salt, iterations);
   return { v: 1, salt: toBase64(salt), iterations, hash: toBase64(hash) };
 }
 
@@ -61,7 +66,7 @@ export async function verifyPassword(pw: string, record: PasswordRecord): Promis
     const salt = fromBase64(record.salt);
     const expected = fromBase64(record.hash);
     if (salt.length === 0 || expected.length === 0) return false;
-    const actual = await derive(pw, salt, record.iterations);
+    const actual = await derive(normalizePassword(pw), salt, record.iterations);
     return constantTimeEqual(actual, expected);
   } catch {
     return false;
@@ -70,6 +75,7 @@ export async function verifyPassword(pw: string, record: PasswordRecord): Promis
 
 /** Wait after a wrong password: 0 below 5 failures, then 30 s doubling up to 15 min. */
 export function backoffMs(failures: number): number {
+  if (!Number.isFinite(failures)) return BACKOFF_MAX_MS;
   if (failures < BACKOFF_FREE_FAILURES) return 0;
   return Math.min(BACKOFF_BASE_MS * 2 ** (failures - BACKOFF_FREE_FAILURES), BACKOFF_MAX_MS);
 }
