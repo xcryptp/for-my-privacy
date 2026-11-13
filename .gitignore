@@ -2,3 +2,7 @@
 node_modules/
 .output/
 .wxt/
+test-results/
+playwright-report/
+.DS_Store
+*.log

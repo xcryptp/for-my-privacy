@@ -1,0 +1,30 @@
+{
+  "name": "for-my-privacy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Password-lock chosen websites in Chrome.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0",
+    "wxt": "^0.21.5"
+  },
+  "scripts": {
+    "postinstall": "wxt prepare",
+    "dev": "wxt",
+    "build": "wxt build",
+    "build:noguard": "wxt build --mode noguard",
+    "build:e2e": "wxt build --mode e2e",
+    "zip": "wxt zip",
+    "zip:noguard": "wxt zip --mode noguard",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "npm run build:e2e && playwright test"
+  }
+}
