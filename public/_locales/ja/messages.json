@@ -24,10 +24,10 @@
     "message": "パスワードが違います。"
   },
   "tooManyAttempts": {
-    "message": "試行回数が多すぎます。$1待ってから、もう一度お試しください。"
+    "message": "試行回数が多すぎます。しばらくしてからもう一度お試しください（残り$1）。"
   },
   "unlockedNoReturn": {
-    "message": "ロックを解除しました。サイトをもう一度開けます。"
+    "message": "ロックを解除しました。サイトをもう一度開くことができます。"
   },
   "openSettings": {
     "message": "設定"
@@ -57,7 +57,7 @@
     "message": "ロックするサイト"
   },
   "domainsHint": {
-    "message": "各サイトは、そのサブドメインもすべてロックします。"
+    "message": "サイトを追加すると、そのサブドメインもすべてロックされます。"
   },
   "addDomainPlaceholder": {
     "message": "example.com"
@@ -87,10 +87,10 @@
     "message": "キーボードもマウスも使わない時間（分）"
   },
   "screenLockLabel": {
-    "message": "画面がロックされたらロックする"
+    "message": "画面がロックされたら、サイトもロックする"
   },
   "guardLabel": {
-    "message": "Chromeの拡張機能ページを開く前にパスワードを確認する"
+    "message": "Chromeの拡張機能ページを開く前にパスワードを求める"
   },
   "guardHint": {
     "message": "ツールバーのメニューから拡張機能を削除することは防げません。READMEをご覧ください。"
@@ -114,10 +114,10 @@
     "message": "今すぐロック"
   },
   "permissionLostTitle": {
-    "message": "サイトへのアクセスが削除されました"
+    "message": "サイトへのアクセス許可が取り消されました"
   },
   "permissionLostBody": {
-    "message": "ロックしたサイトはブロックされたままですが、ロック画面を開けません。アクセスをもう一度許可してください。"
+    "message": "ロックしたサイトはブロックされたままですが、ロック画面が表示されません。アクセスをもう一度許可してください。"
   },
   "grantButton": {
     "message": "アクセスを許可"
