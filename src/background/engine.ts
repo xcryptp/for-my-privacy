@@ -27,8 +27,10 @@ const SCREEN_LOCKED_AT_KEY = 'screenLockedAt';
 // Such a tab keeps that page in its history (and maybe the back/forward cache, which needs no
 // request), so a relock recreates it even when it has moved on to another site.
 const SHOWN_LOCKED_KEY = 'shownLockedTabs';
-// storage.session key: origins of locked domains that tabs showed since the last successful
-// site-data removal. Kept apart from the tab IDs: a closed tab's site keeps its service worker.
+// storage.local key: origins of listed domains that tabs ever showed (any subdomain or port).
+// Kept apart from the tab IDs (a closed tab's site keeps its service worker) and across browser
+// sessions (the worker lives on disk), so every relock and browser start removes their service
+// workers; an origin is dropped once its domain is no longer listed.
 const SHOWN_ORIGINS_KEY = 'shownLockedOrigins';
 // storage.session key: true while the options page may show the settings. Separate from the
 // site unlock: unlocking the settings never unlocks the sites, and the other way round.
@@ -222,7 +224,8 @@ async function removeSiteData(origins: string[]): Promise<boolean> {
   });
   const removal = (async () => {
     await browser.browsingData.remove(
-      { origins: origins as [string, ...string[]] },
+      // protectedWeb too: an installed web app's origin is "protected" and skipped otherwise.
+      { origins: origins as [string, ...string[]], originTypes: { unprotectedWeb: true, protectedWeb: true } },
       { serviceWorkers: true, cacheStorage: true },
     );
     return true;
@@ -269,17 +272,6 @@ async function writeShownLocked({ ids, complete }: { ids: Set<number>; complete:
   if (complete) await browser.storage.session.set({ [SHOWN_LOCKED_KEY]: [...ids] });
 }
 
-/** Forgets `removed`; origins recorded meanwhile stay for the next relock. */
-async function clearShownOrigins(removed: Set<string>): Promise<void> {
-  try {
-    const set = await readShownOrigins();
-    for (const o of removed) set.origins.delete(o);
-    await writeShownOrigins(set);
-  } catch (err) {
-    console.warn('relock: could not clear the shown origins', err);
-  }
-}
-
 async function clearShownLocked(): Promise<void> {
   shownLocked.clear();
   await browser.storage.session.remove(SHOWN_LOCKED_KEY).catch((err) => console.warn('relock: clear failed', err));
@@ -289,7 +281,7 @@ async function clearShownLocked(): Promise<void> {
 async function readShownOrigins(): Promise<{ origins: Set<string>; complete: boolean }> {
   const origins = new Set(shownOrigins);
   try {
-    const stored: unknown = (await browser.storage.session.get(SHOWN_ORIGINS_KEY))[SHOWN_ORIGINS_KEY];
+    const stored: unknown = (await browser.storage.local.get(SHOWN_ORIGINS_KEY))[SHOWN_ORIGINS_KEY];
     if (Array.isArray(stored)) for (const o of stored) if (typeof o === 'string') origins.add(o);
     return { origins, complete: true };
   } catch (err) {
@@ -301,7 +293,31 @@ async function readShownOrigins(): Promise<{ origins: Set<string>; complete: boo
 async function writeShownOrigins({ origins, complete }: { origins: Set<string>; complete: boolean }) {
   shownOrigins.clear();
   for (const o of origins) shownOrigins.add(o);
-  if (complete) await browser.storage.session.set({ [SHOWN_ORIGINS_KEY]: [...origins] });
+  if (complete) await browser.storage.local.set({ [SHOWN_ORIGINS_KEY]: [...origins] });
+}
+
+/**
+ * The shown origins whose host is on a listed domain. Origins of domains no longer listed are
+ * dropped from storage too (best effort; a failed write is logged). Never throws.
+ */
+async function listedShownOrigins(domains: string[]): Promise<string[]> {
+  const set = await readShownOrigins();
+  const listed = new Set(
+    [...set.origins].filter((o) => {
+      try {
+        const host = new URL(o).hostname;
+        return domains.some((d) => hostMatches(host, d));
+      } catch {
+        return false;
+      }
+    }),
+  );
+  if (listed.size !== set.origins.size) {
+    await writeShownOrigins({ origins: listed, complete: set.complete }).catch((err) =>
+      console.warn('relock: could not prune the shown origins', err),
+    );
+  }
+  return [...listed];
 }
 
 /**
@@ -418,21 +434,21 @@ export function relock(reason: 'idle' | 'screen' | 'windows' | 'manual' | 'updat
       const settings = await settingsOrFallback();
       const tabs = (await queryTabs()) ?? before ?? [];
       // Runs alongside the sweep; a failure is logged and the rules and the sweep still apply.
-      const shown = await readShownOrigins();
-      const tabOrigins = tabsToRelock(tabs, settings.domains).flatMap((t) => [
-        lockedTarget(t.url, settings.domains),
-        lockedTarget(t.pendingUrl, settings.domains),
-      ]);
-      const removed = removeSiteData(
-        siteDataOrigins(settings.domains, [...shown.origins, ...tabOrigins.filter((u) => u !== null)]),
-      );
+      const removed = removeSiteData(await siteDataOriginsNow(settings.domains, tabs));
       await sweepTabs(tabs, settings, (await readShownLocked()).ids);
       await clearShownLocked();
-      // Forget the origins only once their data is gone, so a failed removal is tried again.
-      if (await removed) await clearShownOrigins(shown.origins);
+      await removed;
     }
     if (firstError) throw firstError;
   });
+}
+
+/** Listed domains' origins, the listed shown origins and the open locked tabs' origins. */
+async function siteDataOriginsNow(domains: string[], tabs: Tab[]): Promise<string[]> {
+  const tabOrigins = tabsToRelock(tabs, domains)
+    .flatMap((t) => [lockedTarget(t.url, domains), lockedTarget(t.pendingUrl, domains)])
+    .filter((u) => u !== null);
+  return siteDataOrigins(domains, [...(await listedShownOrigins(domains)), ...tabOrigins]);
 }
 
 async function sweepTabs(tabs: Tab[], settings: Settings, shown: Set<number>): Promise<void> {
@@ -463,28 +479,44 @@ async function sweepTabs(tabs: Tab[], settings: Settings, shown: Set<number>): P
  * tabs.onUpdated with a url). An existing unlock is kept.
  */
 export function onWorkerStart(): Promise<void> {
-  return ruleQueue(async () => {
-    const settings = await getSettings();
-    await applyNow(settings);
-    if (!guardActive(settings) || !(await getAuth()).password || (await isUnlocked())) return;
-    const tabs = (await browser.tabs.query({})).filter((t) => t.url && isExtensionsPage(t.url));
-    for (const tab of tabs) await replaceWithLockPage(tab, tab.url!);
-  });
+  return ruleQueue(() => workerStartNow());
+}
+
+async function workerStartNow(): Promise<void> {
+  const settings = await getSettings();
+  await applyNow(settings);
+  if (!guardActive(settings) || !(await getAuth()).password || (await isUnlocked())) return;
+  const tabs = (await browser.tabs.query({})).filter((t) => t.url && isExtensionsPage(t.url));
+  for (const tab of tabs) await replaceWithLockPage(tab, tab.url!);
 }
 
 /**
- * Browser start: onWorkerStart, then, while locked, removes the listed sites' service workers
- * and caches. They live on disk, so a restart keeps them while the unlock is gone.
+ * Browser start, in one ruleQueue step: the worker-start work, then, while locked, every open
+ * or session-restored tab of a listed domain goes to the lock page (a restored tab may have
+ * been answered by the site's service worker, which the rules never see) and the listed sites'
+ * service workers and caches are removed (they live on disk and survive the restart). The
+ * restricted steps run with the last known settings even when the worker-start work fails.
  */
-export async function onBrowserStart(): Promise<void> {
-  // Both run in ruleQueue, so the removal starts after the worker-start sync.
-  const started = onWorkerStart();
-  const cleaned = ruleQueue(async () => {
-    if (!(await passwordMaybeSet())) return;
-    if (await isUnlocked().catch(() => false)) return;
-    await removeSiteData(siteDataOrigins((await settingsOrFallback()).domains));
+export function onBrowserStart(): Promise<void> {
+  return ruleQueue(async () => {
+    let firstError: unknown = null;
+    try {
+      await workerStartNow();
+    } catch (err) {
+      firstError = err;
+    }
+    if ((await passwordMaybeSet()) && (await sitesMaybeLocked())) {
+      const settings = await settingsOrFallback();
+      const tabs = (await queryTabs()) ?? [];
+      const removed = removeSiteData(await siteDataOriginsNow(settings.domains, tabs));
+      for (const tab of tabsToRelock(tabs, settings.domains)) {
+        const target = lockedTarget(tab.url, settings.domains) ?? lockedTarget(tab.pendingUrl, settings.domains);
+        if (target) await replaceWithLockPage(tab, target);
+      }
+      await removed;
+    }
+    if (firstError) throw firstError;
   });
-  await Promise.all([started, cleaned]);
 }
 
 export interface Sender {
@@ -687,33 +719,24 @@ export async function onTabUpdated(
   const domains = await domainsOrLastKnown();
   if (domains === null) {
     // Unknown list: remember the tab for the next sweep (fail closed) but no origin to remove.
-    if (/^(view-source:)?https?:/i.test(url)) await trackShownLocked(tabId, null);
+    if (/^(view-source:)?https?:/i.test(url)) {
+      await trackShownLocked(tabId, null).catch((err) => console.warn('tabs: could not record a tab', err));
+    }
     return;
   }
   const target = lockedTarget(url, domains);
   if (target === null) return;
-  await trackShownLocked(tabId, httpOrigin(target));
+  // Tracking only feeds later relocks; its storage errors must never skip the guard below.
+  try {
+    await trackShownLocked(tabId, httpOrigin(target));
+  } catch (err) {
+    console.warn('tabs: could not record a tab that showed a locked site', err);
+  }
   // A locked site's page that loaded anyway (e.g. answered by the site's own service worker,
-  // which declarativeNetRequest never sees) is swapped for the lock page.
+  // which declarativeNetRequest never sees) is swapped for the lock page. This covers domains
+  // without host access too: their blocked page (or a worker's cached page) becomes the lock page.
   if (!(await passwordMaybeSet()) || !(await sitesMaybeLocked())) return;
   await guardLockedTab(tabId, domains);
-}
-
-/**
- * True when the extension has host access to the listed domain `url` belongs to (a failed check
- * counts as access). Without access the redirect rule skips the domain and its block rule shows
- * Chrome's blocked page, which is also a committed URL of the site; that page stays as it is.
- */
-async function lockScreenAllowed(url: string, domains: string[]): Promise<boolean> {
-  const host = new URL(url).hostname;
-  const domain = domains.find((d) => hostMatches(host, d));
-  if (domain === undefined) return false;
-  try {
-    return (await domainsWithHostAccess([domain])).length === 1;
-  } catch (err) {
-    console.warn('tabs: could not check site access, showing the lock page', err);
-    return true;
-  }
 }
 
 /** Replaces tab `tabId` with the lock page if it still shows a locked site while locked. */
@@ -728,7 +751,7 @@ function guardLockedTab(tabId: number, domains: string[]): Promise<void> {
       return; // closed meanwhile (e.g. by the relock sweep)
     }
     const target = lockedTarget(tab.url, domains);
-    if (target !== null && (await lockScreenAllowed(target, domains))) await replaceWithLockPage(tab, target);
+    if (target !== null) await replaceWithLockPage(tab, target);
   });
 }
 

@@ -1087,13 +1087,16 @@ describe('service workers and caches of locked sites (L1)', () => {
     expect(chrome.browsingData.remove).toHaveBeenCalledTimes(1);
     const [options, types] = chrome.browsingData.remove.mock.calls[0]!;
     expect(types).toEqual({ serviceWorkers: true, cacheStorage: true });
-    expect(Object.keys(options as object)).toEqual(['origins']);
+    expect(options).toEqual({
+      origins: expect.any(Array),
+      originTypes: { unprotectedWeb: true, protectedWeb: true },
+    });
     expect([...removedOrigins()!].sort()).toEqual(
       [...BASE_ORIGINS, 'http://example.test:8080', 'https://shop.example.test'].sort(),
     );
   });
 
-  it('a failed removal never stops the relock, and its origins are tried again next time', async () => {
+  it('a failed removal never stops the relock, and the origin is asked for again next time', async () => {
     await seedUnlocked(['example.test']);
     await onTabUpdated(5, { url: 'http://example.test:8080/' });
     const { remove } = stubTabs([
@@ -1109,9 +1112,30 @@ describe('service workers and caches of locked sites (L1)', () => {
     stubTabs([]);
     await relock('idle');
     expect(removedOrigins(1)).toContain('http://example.test:8080');
-    // Removed now, so the third relock asks only for the listed domains.
+  });
+
+  it('shown origins are kept in storage.local for later sessions, and dropped once unlisted', async () => {
+    const stored = async () => (await browser.storage.local.get('shownLockedOrigins')).shownLockedOrigins;
+    await seedUnlocked(['example.test', 'other.test']);
+    await onTabUpdated(5, { url: 'https://deep.sub.example.test/a' });
+    await onTabUpdated(6, { url: 'https://app.other.test/' });
+    expect(await stored()).toEqual(['https://deep.sub.example.test', 'https://app.other.test']);
+    expect((await browser.storage.session.get('shownLockedOrigins')).shownLockedOrigins).toBeUndefined();
+    stubTabs([]);
+
+    // Kept after a successful removal: a browser start (session storage gone) still covers it.
     await relock('idle');
-    expect(removedOrigins(2)).toEqual(BASE_ORIGINS);
+    expect(removedOrigins(0)).toEqual(expect.arrayContaining(['https://deep.sub.example.test']));
+    await browser.storage.session.clear();
+    await onBrowserStart();
+    expect(removedOrigins(1)).toEqual(expect.arrayContaining(['https://deep.sub.example.test']));
+
+    // other.test is no longer listed: its origin is neither removed nor kept.
+    await saveSettings({ domains: ['example.test'] });
+    await relock('idle');
+    expect(removedOrigins(2)).not.toContain('https://app.other.test');
+    expect(removedOrigins(2)).toContain('https://deep.sub.example.test');
+    expect(await stored()).toEqual(['https://deep.sub.example.test']);
   });
 
   it('a removal that hangs does not hold the relock queue', async () => {
@@ -1151,6 +1175,37 @@ describe('service workers and caches of locked sites (L1)', () => {
     await handleMessage({ type: 'unlock', password: PW }, {});
     await onBrowserStart();
     expect(chrome.browsingData.remove).not.toHaveBeenCalled();
+  });
+
+  it('browser start sends every open or restored tab of a listed domain to the lock page', async () => {
+    await seedPassword();
+    await saveSettings({ domains: ['example.test', 'noperm.test'] });
+    const tabs = [
+      { id: 1, windowId: 1, index: 0, pinned: true, active: false, url: 'https://www.example.test/feed' },
+      { id: 2, windowId: 1, index: 1, pinned: false, active: true, url: 'https://other.test/' },
+      { id: 3, windowId: 1, index: 2, pinned: false, active: false, url: 'https://noperm.test/' },
+    ];
+    vi.spyOn(browser.tabs, 'query').mockImplementation((async () => tabs) as never);
+    const create = vi.spyOn(browser.tabs, 'create').mockImplementation((async () => ({ id: 99 })) as never);
+    const remove = vi.spyOn(browser.tabs, 'remove').mockImplementation((async () => {}) as never);
+    // Domains without host access are sent to the lock page too.
+    vi.mocked(browser.permissions.contains).mockImplementation((async ({ origins }: { origins: string[] }) =>
+      !origins[0]!.includes('noperm')) as never);
+    await onBrowserStart();
+    expect(create.mock.calls.map((c) => (c[0] as { url: string }).url)).toEqual([
+      `${LOCK}#u=https://www.example.test/feed`,
+      `${LOCK}#u=https://noperm.test/`,
+    ]);
+    expect(remove.mock.calls.map((c) => c[0])).toEqual([1, 3]);
+    expect(chrome.browsingData.remove).toHaveBeenCalledTimes(1);
+
+    // While unlocked nothing is touched.
+    create.mockClear();
+    remove.mockClear();
+    await handleMessage({ type: 'unlock', password: PW }, {});
+    await onBrowserStart();
+    expect(create).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
   });
 
   it('browser start removes nothing before a password exists', async () => {
@@ -1235,21 +1290,30 @@ describe('a locked site that loads anyway is replaced (L2)', () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it('leaves a domain without site access on Chrome’s blocked page (no lock screen for it)', async () => {
+  it('replaces a tab of a domain without site access too (its worker or blocked page)', async () => {
     await seedLocked();
-    const contains = vi.mocked(browser.permissions.contains);
-    contains.mockImplementation((async () => false) as never);
+    vi.mocked(browser.permissions.contains).mockImplementation((async () => false) as never);
     const { create, remove } = stubTab({ url: URL_ });
     await onTabUpdated(3, { url: URL_ });
-    expect(contains).toHaveBeenCalledWith({ origins: ['*://example.test/*', '*://*.example.test/*'] });
-    expect(create).not.toHaveBeenCalled();
-    expect(remove).not.toHaveBeenCalled();
+    expect(create.mock.calls.map((c) => (c[0] as { url: string }).url)).toEqual([`${LOCK}#u=${URL_}`]);
+    expect(remove.mock.calls.map((c) => c[0])).toEqual([3]);
+  });
 
-    // A failed access check shows the lock page (fail closed).
-    contains.mockImplementation((async () => {
-      throw new Error('permissions down');
-    }) as never);
+  it('a storage failure while recording the tab never skips the guard', async () => {
+    await seedLocked();
+    const { remove } = stubTab({ url: URL_ });
+    const boom = (async () => {
+      throw new Error('storage down');
+    }) as never;
+    vi.spyOn(browser.storage.local, 'set').mockImplementation(boom);
+    vi.spyOn(browser.storage.session, 'set').mockImplementation(boom);
     await onTabUpdated(3, { url: URL_ });
+    expect(remove.mock.calls.map((c) => c[0])).toEqual([3]);
+
+    // A failed read of the recorded tabs as well.
+    remove.mockClear();
+    vi.spyOn(browser.storage.session, 'get').mockImplementation(boom);
+    await onTabUpdated(3, { url: 'https://m.example.test/' });
     expect(remove.mock.calls.map((c) => c[0])).toEqual([3]);
   });
 

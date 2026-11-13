@@ -20,7 +20,7 @@ const HOST_MAP = [
 ];
 const HOST_RESOLVER_RULES = HOST_MAP.map((h) => `MAP ${h} 127.0.0.1`).join(', ');
 // Origins treated as secure so their pages can register a service worker.
-const SW_HOSTS = ['example.test', 'www.example.test', 'm.example.test'];
+const SW_HOSTS = ['example.test', 'www.example.test', 'm.example.test', 'noperm.test'];
 
 type BrowserState = {
   context: BrowserContext;

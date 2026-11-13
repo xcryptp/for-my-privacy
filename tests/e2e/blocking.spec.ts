@@ -114,22 +114,30 @@ test('B6: view-source of a locked page shows the lock page', async ({ context, s
   expect(page.url()).toContain(`chrome-extension://${extensionId}/lock.html`);
 });
 
-test('B9a: a domain without host permission gets a navigation error, not the page or the lock page', async ({
+test('B9a: a domain without host permission is blocked, then its tab ends on the lock page', async ({
   context,
   sw,
+  extensionId,
   origin,
 }) => {
   await sync(sw, ['example.test', 'noperm.test']);
   const page = await context.newPage();
-  // The block rule fails the navigation itself.
-  const error = await page.goto(origin('noperm.test')).then(
-    () => null,
-    (err: Error) => err,
-  );
-  expect(error?.message).toContain('net::ERR_BLOCKED_BY_CLIENT');
-  expect(page.url()).not.toContain('lock.html');
-  expect(await page.title()).not.toBe('ORIGINAL noperm.test');
-  await expect(page.locator('body')).not.toHaveText('ORIGINAL-PAGE');
+  const failed: { url: string; error: string | undefined }[] = [];
+  page.on('requestfailed', (r) => failed.push({ url: r.url(), error: r.failure()?.errorText }));
+  const url = origin('noperm.test') + '/';
+  await page.goto(url).catch(() => {});
+  // The block rule fails the navigation itself (no redirect without host access).
+  await expect.poll(() => failed.find((f) => f.url === url)?.error).toBe('net::ERR_BLOCKED_BY_CLIENT');
+  // Chrome's blocked page commits under the site's URL; the tab guard then swaps the tab for
+  // the lock page. The site's own page is never the final state.
+  const lockUrl = `chrome-extension://${extensionId}/lock.html#u=${url}`;
+  await expect.poll(() => context.pages().some((p) => !p.isClosed() && p.url() === lockUrl)).toBe(true);
+  await new Promise((r) => setTimeout(r, 500));
+  for (const p of context.pages()) {
+    if (p.isClosed()) continue;
+    expect(await p.title().catch(() => ''), p.url()).not.toBe('ORIGINAL noperm.test');
+    expect(await p.locator('body').textContent().catch(() => ''), p.url()).not.toContain('ORIGINAL-PAGE');
+  }
 });
 
 test('B9b: an iframe of a locked domain does not load, even inside an unlocked page', async ({
@@ -156,7 +164,12 @@ test('B9b: an iframe of a locked domain does not load, even inside an unlocked p
 
 // Instagram-style sites register a service worker that answers navigations from its cache, so a
 // typed navigation never reaches the network and the redirect rule never sees it.
-async function installSiteWorker(context: BrowserContext, sw: Worker, origin: (host: string) => string) {
+async function installSiteWorker(
+  context: BrowserContext,
+  sw: Worker,
+  origin: (host: string) => string,
+  host = 'example.test',
+) {
   const res = await sw.evaluate(
     (pw) => (globalThis as unknown as { __fmp: Api }).__fmp.handleMessage({ type: 'unlock', password: pw }, {}),
     'correct horse',
@@ -164,7 +177,7 @@ async function installSiteWorker(context: BrowserContext, sw: Worker, origin: (h
   expect(res.ok).toBe(true);
   // While unlocked the site installs its service worker and it takes control of the page.
   const site = await context.newPage();
-  await site.goto(origin('example.test') + '/sw-page');
+  await site.goto(origin(host) + '/sw-page');
   await site.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
   await site.reload();
   await expect.poll(() => site.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
@@ -175,7 +188,7 @@ async function installSiteWorker(context: BrowserContext, sw: Worker, origin: (h
   const fetchApi = () =>
     other.evaluate(
       (u) => fetch(u).then((r) => r.text(), (e: Error) => `failed: ${e.message}`),
-      origin('example.test') + '/api',
+      origin(host) + '/api',
     );
   expect(await fetchApi()).toBe('{"data":"SECRET"}');
   return { fetchApi };
@@ -183,6 +196,7 @@ async function installSiteWorker(context: BrowserContext, sw: Worker, origin: (h
 
 /** Types the cached page into a new tab; it must end on the lock page and nothing shows the site. */
 async function expectTypedPageLocked(context: BrowserContext, extensionId: string, url: string) {
+  const title = `ORIGINAL ${new URL(url).hostname}`;
   // The relock sent the site's tab to the lock page; close it so only the new tab can show one.
   const lockUrl = `chrome-extension://${extensionId}/lock.html#u=${url}`;
   for (const p of context.pages()) if (p.url() === lockUrl) await p.close();
@@ -194,7 +208,7 @@ async function expectTypedPageLocked(context: BrowserContext, extensionId: strin
   await new Promise((r) => setTimeout(r, 500));
   for (const p of context.pages()) {
     if (p.isClosed()) continue;
-    expect.soft(await p.title().catch(() => ''), p.url()).not.toBe('ORIGINAL example.test');
+    expect.soft(await p.title().catch(() => ''), p.url()).not.toBe(title);
   }
 }
 
@@ -235,12 +249,7 @@ test('B11: without the service-worker removal, the tab guard and the rules still
   await sync(sw, ['example.test']);
   const { fetchApi } = await installSiteWorker(context, sw, origin);
   // Make the removal fail, so the site's service worker survives the relock.
-  await sw.evaluate(() => {
-    (globalThis as unknown as { chrome: { browsingData: { remove: unknown } } }).chrome.browsingData.remove =
-      async () => {
-        throw new Error('disabled by the test');
-      };
-  });
+  await disableSiteDataRemoval(sw);
   await lockNow(sw);
   // The service worker answers the navigation from its cache; tabs.onUpdated replaces the tab.
   await expectTypedPageLocked(context, extensionId, origin('example.test') + '/sw-page');
@@ -250,5 +259,37 @@ test('B11: without the service-worker removal, the tab guard and the rules still
   await unlock(sw, ['example.test']);
   const page = await context.newPage();
   await page.goto(origin('example.test') + '/');
+  expect(await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length)).toBe(1);
+});
+
+/** Makes the relock's service-worker removal fail, as after a restart or a failed removal. */
+const disableSiteDataRemoval = (sw: Worker) =>
+  sw.evaluate(() => {
+    (globalThis as unknown as { chrome: { browsingData: { remove: unknown } } }).chrome.browsingData.remove =
+      async () => {
+        throw new Error('disabled by the test');
+      };
+  });
+
+test('B12: a domain without host permission answered by its own service worker still shows the lock page', async ({
+  context,
+  sw,
+  extensionId,
+  origin,
+}) => {
+  await sync(sw, ['example.test', 'noperm.test']);
+  // The unlock rule lets noperm.test through, so its worker installs while unlocked.
+  const { fetchApi } = await installSiteWorker(context, sw, origin, 'noperm.test');
+  await disableSiteDataRemoval(sw);
+  await lockNow(sw);
+  // No redirect can apply without host access, and the worker answers from its cache anyway;
+  // the tab guard still replaces the tab.
+  await expectTypedPageLocked(context, extensionId, origin('noperm.test') + '/sw-page');
+  expect(await fetchApi()).toMatch(/^failed: /);
+
+  // Premise: the worker survived the relock.
+  await unlock(sw, ['example.test', 'noperm.test']);
+  const page = await context.newPage();
+  await page.goto(origin('noperm.test') + '/');
   expect(await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length)).toBe(1);
 });
