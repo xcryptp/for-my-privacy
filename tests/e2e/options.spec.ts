@@ -510,7 +510,7 @@ test('changing the password works: the new one unlocks, the old one does not', a
   await ui.next.fill('another secret');
   await ui.changeConfirm.fill('another secret');
   await ui.save.click();
-  await expect(ui.changeError).toHaveText(await ui.text('wrongPassword'));
+  await expect(ui.changeError).toHaveText(await ui.text('wrongPasswordTries', '4'));
 
   await ui.current.fill(PW);
   await ui.next.fill('another secret');
@@ -524,7 +524,7 @@ test('changing the password works: the new one unlocks, the old one does not', a
   await expect(ui.unlock).toBeVisible();
   await ui.password.fill(PW);
   await ui.unlock.click();
-  await expect(ui.unlockError).toHaveText(await ui.text('wrongPassword'));
+  await expect(ui.unlockError).toHaveText(await ui.text('wrongPasswordTries', '4'));
   await ui.password.fill('another secret');
   await ui.unlock.click();
   await expect(ui.lockNow).toBeVisible();
@@ -619,7 +619,7 @@ test('a wrong password on the unlock form shows the error, five show a countdown
   await ui.lockNow.click();
   await ui.password.fill('nope nope');
   await ui.unlock.click();
-  await expect(ui.unlockError).toHaveText(await ui.text('wrongPassword'));
+  await expect(ui.unlockError).toHaveText(await ui.text('wrongPasswordTries', '4'));
   for (let i = 0; i < 4; i++) {
     await ui.password.fill(`nope ${i}`);
     await ui.password.press('Enter');
@@ -956,15 +956,92 @@ test('the unlock choice is a radio group in Security, saved and kept', async ({ 
   await completeOnboarding(ui);
   await (await ui.menuLink('menuSecurity')).click();
   await expect(await ui.heading('unlockScopeTitle')).toBeVisible();
+  await expect(page.getByText(await ui.text('unlockScopeNote'), { exact: true })).toBeVisible();
   const all = page.getByRole('radio', { name: await ui.text('unlockScopeAll') });
   const site = page.getByRole('radio', { name: await ui.text('unlockScopeSite') });
   await expect(all).toBeChecked();
   await site.check();
-  await expect(ui.toast).toHaveText(await ui.text('saved'));
+  // The worker locks the sites again on a change; the toast says so.
+  await expect(ui.toast).toHaveText(await ui.text('unlockScopeSaved'));
   expect(await sw.evaluate(() => (globalThis as unknown as { __fmp: Api }).__fmp.getSettings().then((x) => x.unlockScope))).toBe('site');
   await page.reload();
   await expect(site).toBeChecked();
   await all.check();
   await expect(all).toBeChecked();
   await expect(site).not.toBeChecked();
+});
+
+test('changing the unlock choice locks the sites again while the settings stay open', async ({
+  context,
+  sw,
+  extensionId,
+  origin,
+}) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  await completeOnboarding(ui, 'example.test');
+  // Sites unlocked, as after a site unlock.
+  await sw.evaluate(() =>
+    (globalThis as unknown as { __fmp: Api & { setUnlocked: (d: string[]) => Promise<void> } }).__fmp.setUnlocked([
+      'example.test',
+    ]),
+  );
+  const open = await context.newPage();
+  await open.goto(origin('example.test')).catch(() => {});
+  await expect(open).toHaveTitle('ORIGINAL example.test');
+
+  await (await ui.menuLink('menuSecurity')).click();
+  await page.getByRole('radio', { name: await ui.text('unlockScopeSite') }).check();
+  await expect(ui.toast).toHaveText(await ui.text('unlockScopeSaved'));
+  // The settings are still open for their owner ...
+  await expect(ui.lockNow).toBeVisible();
+  await expect(await ui.heading('unlockScopeTitle')).toBeVisible();
+  // ... and the sites are locked again.
+  const again = await context.newPage();
+  await again.goto(origin('example.test')).catch(() => {});
+  await expect.poll(() => again.url()).toMatch(new RegExp(`^chrome-extension://${extensionId}/lock\\.html#[ut]=`));
+});
+
+test('the locked settings carry the forgot-password help and the controls hold no earlier values', async ({
+  context,
+  sw,
+  extensionId,
+}) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  await completeOnboarding(ui);
+  await (await ui.menuLink('menuAutolock')).click();
+  await ui.idle.fill('9');
+  await ui.idle.press('Enter');
+  await expect(ui.toast).toHaveText(await ui.text('saved'));
+  await ui.lockNow.click();
+  await expect(ui.unlock).toBeVisible();
+  const held = await page.evaluate(() => ({
+    idle: (document.getElementById('idle') as HTMLInputElement).value,
+    scope: (document.getElementById('scope-site') as HTMLInputElement).checked,
+  }));
+  expect(held).toEqual({ idle: '5', scope: false });
+
+  const summary = page.getByText(await ui.text('forgotSummary'), { exact: true });
+  const body = page.getByText(await ui.text('forgotBody'), { exact: true });
+  await expect(summary).toBeVisible();
+  await expect(body).toBeHidden();
+  await summary.click();
+  await expect(body).toBeVisible();
+});
+
+test('a typed address deeper than the locked domain gets a warning-weight preview', async ({
+  context,
+  sw,
+  extensionId,
+}) => {
+  const page = await context.newPage();
+  const ui = await openOptions(page, sw, extensionId);
+  await completeOnboarding(ui);
+  const preview = page.locator('#domain-preview');
+  await ui.domainField.fill('https://m.blog.example.test/x');
+  await expect(preview).toHaveClass(/broader/);
+  expect(await preview.evaluate((el) => getComputedStyle(el).fontWeight)).toBe('600');
+  await ui.domainField.fill('example.test');
+  await expect(preview).not.toHaveClass(/broader/);
 });

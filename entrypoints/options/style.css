@@ -216,6 +216,16 @@ h2[tabindex='-1']:focus {
   overflow-wrap: anywhere;
 }
 
+/* The typed address is deeper than the domain that gets locked: that is worth reading, not muted. */
+.preview.broader {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--warn-border);
+  border-radius: var(--radius-sm);
+  background: var(--warn-bg);
+  color: var(--warn);
+  font-weight: 600;
+}
+
 .preview.invalid {
   color: var(--danger);
 }
@@ -352,6 +362,31 @@ button.secondary:hover:not(:disabled) {
 /* Back sits first but is the lesser action: it takes less room than the main button. */
 .actions button.secondary {
   flex: 0 1 auto;
+}
+
+/* The "Forgot your password?" help of the locked settings, the same as on the lock page. */
+.forgot {
+  font-size: 0.875rem;
+}
+
+.forgot summary {
+  display: block;
+  min-height: 2rem;
+  padding: var(--space-1) 0;
+  color: var(--accent);
+  text-align: center;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  cursor: pointer;
+}
+
+.forgot p {
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
 }
 
 .spaced {
@@ -572,6 +607,7 @@ input.narrow {
 
 /* Korean breaks between words, not inside them; Japanese has no spaces and keeps the default. */
 :lang(ko) .muted,
+:lang(ko) .forgot p,
 :lang(ko) .warning,
 :lang(ko) .radio span,
 :lang(ko) .message,

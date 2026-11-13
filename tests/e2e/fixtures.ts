@@ -21,8 +21,9 @@ const HOST_MAP = [
   '*.second.test',
 ];
 const HOST_RESOLVER_RULES = HOST_MAP.map((h) => `MAP ${h} 127.0.0.1`).join(', ');
-// Origins treated as secure so their pages can register a service worker.
-const SW_HOSTS = ['example.test', 'www.example.test', 'm.example.test', 'a.b.c.example.test', 'noperm.test'];
+// Origins treated as secure so their pages can register a service worker (other.test too: a
+// frame is a secure context only inside a secure page).
+const SW_HOSTS = ['example.test', 'www.example.test', 'm.example.test', 'a.b.c.example.test', 'noperm.test', 'other.test'];
 
 type BrowserState = {
   context: BrowserContext;
@@ -98,6 +99,21 @@ self.addEventListener('fetch', (e) => {
           // worker from inside the frame (that origin never shows as a top-level tab).
           res.end(
             `<!doctype html><title>ORIGINAL ${host}</title><body><iframe src="http://a.b.c.example.test:${port}/sw-page"></iframe></body>`,
+          );
+          return;
+        }
+        if (pathname === '/frame-deep') {
+          // Another site embedding the locked site's deeper subdomain, which registers its own
+          // (partitioned) service worker from inside the frame.
+          res.end(
+            `<!doctype html><title>HOST ${host}</title><body><iframe src="http://a.b.c.example.test:${port}/sw-page"></iframe></body>`,
+          );
+          return;
+        }
+        if (pathname === '/frame-unload') {
+          // A host page that asks before it is left, so a reload can be held back by a dialog.
+          res.end(
+            `<!doctype html><title>HOST ${host}</title><body><iframe src="http://example.test:${port}/"></iframe><script>addEventListener('beforeunload', (e) => { e.preventDefault(); e.returnValue = ''; });</script></body>`,
           );
           return;
         }

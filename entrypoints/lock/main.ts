@@ -1,8 +1,10 @@
 import { browser } from 'wxt/browser';
 import { applyI18n, t } from '../../src/lib/i18n';
-import { send } from '../../src/lib/messages';
-import { getSettings, type UnlockScope } from '../../src/lib/settings';
+import { send, type TargetResponse } from '../../src/lib/messages';
+import { hostMatches } from '../../src/lib/domain';
+import { getSettings, type Settings, type UnlockScope } from '../../src/lib/settings';
 import { createCountdown, formatCountdown } from '../../src/ui/countdown';
+import { wrongPasswordText } from '../../src/ui/tries';
 
 export { formatCountdown };
 
@@ -20,16 +22,31 @@ export function parseToken(hash: string): string | undefined {
   return hash.slice(marker.length) || undefined;
 }
 
-/** The message after a wrong password: how many tries are left before the wait, while there are some. */
-export function wrongPasswordText(triesLeft: number | undefined, tr: typeof t = t): string {
-  if (typeof triesLeft !== 'number' || triesLeft <= 0) return tr('wrongPassword');
-  return triesLeft === 1 ? tr('wrongPasswordLastTry') : tr('wrongPasswordTries', String(triesLeft));
+export { wrongPasswordText };
+
+/** What the lock page knows about its target: the host to show, and what the unlock opens. */
+export interface HintTarget {
+  /** The listed domain the site belongs to (an unlock in 'site' scope opens it and every address under it). */
+  domain?: string;
+  /** `extensions` for the extensions page that the guard sent here. */
+  kind?: 'site' | 'extensions';
+}
+
+/** The listed domain of a host: the engine's answer, or else the first stored domain the host falls under. */
+export function listedDomainFor(
+  host: string | undefined,
+  answered: string | undefined,
+  domains: readonly string[],
+): string | undefined {
+  if (answered) return answered;
+  return host ? domains.find((d) => hostMatches(host, d)) : undefined;
 }
 
 /** The muted line under the Unlock button: what one unlock opens, following the unlock setting. */
-export function scopeHintText(scope: UnlockScope, host: string | undefined, tr: typeof t = t): string {
-  if (scope === 'site') return host ? tr('unlockHintSite', host) : tr('unlockHintThisSite');
-  return tr('unlockHintAll');
+export function scopeHintText(scope: UnlockScope, target: HintTarget, tr: typeof t = t): string {
+  if (scope !== 'site') return tr('unlockHintAll');
+  if (target.kind === 'extensions') return tr('unlockHintExtensions');
+  return target.domain ? tr('unlockHintSite', target.domain) : tr('unlockHintThisSite');
 }
 
 function byId<T extends HTMLElement>(id: string): T {
@@ -61,6 +78,16 @@ function init(): void {
   applyI18n();
   document.documentElement.lang = browser.i18n.getUILanguage();
 
+  // What the worker said about the target: a listed site (with its domain) or the extensions page.
+  let answeredDomain: string | undefined;
+  let kind: 'site' | 'extensions' | undefined;
+
+  function takeAnswer(res: Extract<TargetResponse, { ok: true }>): void {
+    host = res.host;
+    kind = res.kind;
+    answeredDomain = res.kind === 'site' ? res.domain : undefined;
+  }
+
   async function resolveTarget(): Promise<void> {
     const raw = parseReturnTo(location.hash);
     const known = parseToken(location.hash);
@@ -69,21 +96,23 @@ function init(): void {
         const res = await send({ type: 'claimTarget', raw });
         if (res.ok) {
           token = res.token;
-          host = res.host;
+          takeAnswer(res);
           history.replaceState(null, '', `#t=${res.token}`);
-        } else {
-          // Nothing safe to return to: drop the address from the bar all the same.
-          history.replaceState(null, '', location.pathname + location.search);
         }
       } else if (known !== undefined) {
         const res = await send({ type: 'describeTarget', token: known });
         if (res.ok) {
           token = known;
-          host = res.host;
+          takeAnswer(res);
         }
       }
     } catch (err) {
       console.warn('target lookup failed', err);
+    } finally {
+      // Whatever happened, the raw address does not stay in the address bar.
+      if (parseReturnTo(location.hash) !== undefined) {
+        history.replaceState(null, '', location.pathname + location.search);
+      }
     }
     if (host) {
       subtitle.textContent = t('lockSubtitle', host);
@@ -92,13 +121,26 @@ function init(): void {
   }
 
   // The line under Unlock follows the unlock setting; "all" is also what a failed read means.
+  async function refreshHint(): Promise<void> {
+    let current: Pick<Settings, 'unlockScope' | 'domains'> = { unlockScope: 'all', domains: [] };
+    try {
+      current = await getSettings();
+    } catch (err) {
+      console.warn('settings read failed', err);
+    }
+    scopeHint.textContent = scopeHintText(current.unlockScope, {
+      domain: listedDomainFor(host, answeredDomain, current.domains),
+      kind,
+    });
+    scopeHint.hidden = false;
+  }
+
   const targetReady = resolveTarget();
-  Promise.all([targetReady, getSettings().then((current) => current.unlockScope, () => 'all' as UnlockScope)])
-    .then(([, scope]) => {
-      scopeHint.textContent = scopeHintText(scope, host);
-      scopeHint.hidden = false;
-    })
-    .catch((err) => console.warn('hint failed', err));
+  void targetReady.then(refreshHint).catch((err) => console.warn('hint failed', err));
+  // A change of the unlock setting (or of the list) made on the settings page shows here at once.
+  browser.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && 'settings' in changes) void targetReady.then(refreshHint);
+  });
 
   // The click handler reuses an open options tab; the href is the fallback.
   settings.href = browser.runtime.getURL('/options.html');
@@ -134,8 +176,9 @@ function init(): void {
         unlocked = true;
         // The service worker navigates this tab when it holds a target for the token; otherwise,
         // or if nothing happened after a moment, say that the site can be opened again.
+        // The extensions page that the guard sent here is opened by the worker: never claim there is nothing to open.
         if (token === undefined) showUnlockedNoReturn();
-        else setTimeout(showUnlockedNoReturn, NO_RETURN_MS);
+        else if (kind !== 'extensions') setTimeout(showUnlockedNoReturn, NO_RETURN_MS);
         return;
       }
       if (res.state.waitMs > 0) countdown.start(res.state.waitMs);

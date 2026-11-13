@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { parseReturnTo, parseToken, scopeHintText, wrongPasswordText } from '../../entrypoints/lock/main';
+import { listedDomainFor, parseReturnTo, parseToken, scopeHintText, wrongPasswordText } from '../../entrypoints/lock/main';
 import { countdownParts, formatCountdown, shouldRefocus } from '../../src/ui/countdown';
 
 describe('parseReturnTo', () => {
@@ -73,22 +73,24 @@ describe('wrongPasswordText', () => {
 });
 
 describe('scopeHintText', () => {
-  it('follows the unlock setting', () => {
-    expect(scopeHintText('all', 'www.example.test', tr)).toBe('unlockHintAll()');
-    expect(scopeHintText('site', 'www.example.test', tr)).toBe('unlockHintSite(www.example.test)');
-    expect(scopeHintText('site', undefined, tr)).toBe('unlockHintThisSite()');
+  it('follows the unlock setting and names the listed domain, not the host', () => {
+    expect(scopeHintText('all', { domain: 'example.test' }, tr)).toBe('unlockHintAll()');
+    expect(scopeHintText('site', { domain: 'example.test' }, tr)).toBe('unlockHintSite(example.test)');
+    expect(scopeHintText('site', {}, tr)).toBe('unlockHintThisSite()');
+  });
+
+  it('says the extensions page is opened for that target in site scope', () => {
+    expect(scopeHintText('site', { kind: 'extensions' }, tr)).toBe('unlockHintExtensions()');
+    expect(scopeHintText('all', { kind: 'extensions' }, tr)).toBe('unlockHintAll()');
   });
 });
 
-describe('parseToken', () => {
-  it('returns the token after #t=', () => {
-    expect(parseToken('#t=abc123')).toBe('abc123');
-  });
-
-  it('returns undefined without a usable token', () => {
-    expect(parseToken('')).toBeUndefined();
-    expect(parseToken('#t=')).toBeUndefined();
-    expect(parseToken('#u=http://a.test/')).toBeUndefined();
+describe('listedDomainFor', () => {
+  it('prefers the answered domain, else finds the stored domain the host falls under', () => {
+    expect(listedDomainFor('m.example.test', 'example.test', ['other.test'])).toBe('example.test');
+    expect(listedDomainFor('m.example.test', undefined, ['other.test', 'example.test'])).toBe('example.test');
+    expect(listedDomainFor('m.example.test', undefined, ['other.test'])).toBeUndefined();
+    expect(listedDomainFor(undefined, undefined, ['example.test'])).toBeUndefined();
   });
 });
 

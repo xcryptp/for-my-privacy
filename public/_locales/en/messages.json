@@ -201,7 +201,7 @@
     "message": "Another site"
   },
   "onboardingDoneTip": {
-    "message": "All set. Your chosen sites are locked now. Open one in a new tab to see the lock page. To lock again right away later, click this extension's icon in the toolbar."
+    "message": "All set. Your chosen sites are locked now. Open one in a new tab to see the lock page. To lock again right away later, pin this extension to the toolbar and click its icon, or press Alt+Shift+L."
   },
   "waitSeconds": {
     "message": "$1 s"
@@ -222,13 +222,13 @@
     "message": "Forgot your password?"
   },
   "forgotBody": {
-    "message": "A forgotten password cannot be recovered. To start over, remove this extension: right-click its icon in the Chrome toolbar and choose \"Remove from Chrome\" (if you cannot see the icon, click the puzzle-piece icon first). This also erases the password and the list of locked sites. Then install the extension again."
+    "message": "A forgotten password cannot be recovered. To start over, remove this extension: click the puzzle-piece icon in the Chrome toolbar, click the three-dot menu next to For My Privacy, and choose \"Remove from Chrome\". This also erases the password and the list of locked sites. Then install the extension again."
   },
   "unlockHintAll": {
     "message": "This unlocks all your locked sites."
   },
   "unlockHintSite": {
-    "message": "This unlocks only $1."
+    "message": "This unlocks only $1 and every address under it."
   },
   "unlockHintThisSite": {
     "message": "This unlocks only this site."
@@ -286,5 +286,14 @@
   },
   "popupNotSet": {
     "message": "Finish the setup in Settings first."
+  },
+  "unlockHintExtensions": {
+    "message": "This opens Chrome's extensions page."
+  },
+  "unlockScopeNote": {
+    "message": "Changing this locks your sites again."
+  },
+  "unlockScopeSaved": {
+    "message": "Saved. Your sites are locked again."
   }
 }

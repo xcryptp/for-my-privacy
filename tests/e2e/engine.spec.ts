@@ -364,3 +364,111 @@ test("E7: with the 'site' scope, one unlock opens only that site; another listed
   await sub.goto(origin('m.example.test') + '/');
   await expect(sub).toHaveTitle('ORIGINAL m.example.test');
 });
+
+/** Makes the relock's service-worker removal fail, as after a failed or timed-out removal. */
+const failSiteDataRemoval = (sw: Worker) =>
+  sw.evaluate(() => {
+    (globalThis as unknown as { chrome: { browsingData: { remove: unknown } } }).chrome.browsingData.remove =
+      async () => {
+        throw new Error('disabled by the test');
+      };
+  });
+
+/** Every frame (not the top one) of every open page, as "url | title". */
+async function subFrames(context: BrowserContext): Promise<string[]> {
+  const out: string[] = [];
+  for (const p of context.pages()) {
+    if (p.isClosed()) continue;
+    for (const f of p.frames()) {
+      if (f === p.mainFrame()) continue;
+      out.push(`${f.url()} | ${await f.title().catch(() => '')}`);
+    }
+  }
+  return out;
+}
+
+test('EF1: a frame the site’s own service worker answers while locked is not left on screen', async ({
+  context,
+  sw,
+  origin,
+}) => {
+  await setUp(sw, ['example.test']);
+  // While unlocked, another site embeds the locked site's deeper subdomain, which installs a
+  // worker that answers the frame's navigation from its cache (no request the rules could see).
+  const host = await context.newPage();
+  await host.goto(origin('other.test') + '/frame-deep');
+  const frame = () => host.frames().find((f) => f !== host.mainFrame());
+  await expect
+    .poll(() => frame()?.evaluate(async () => !!(await navigator.serviceWorker.getRegistration())?.active).catch(() => false))
+    .toBe(true);
+  // The removal fails, so the worker survives the relock and answers the reloaded frame.
+  await failSiteDataRemoval(sw);
+  await call(sw, { type: 'lockNow' });
+
+  // A new visit to the host page as well.
+  const again = await context.newPage();
+  await again.goto(origin('other.test') + '/frame-deep').catch(() => {});
+  const shownSite = new RegExp(`^${origin('a.b.c.example.test').replace(/[.]/g, '\\.')}|ORIGINAL`);
+  await expect.poll(() => subFrames(context), { timeout: 10_000 }).not.toContainEqual(expect.stringMatching(shownSite));
+  await new Promise((r) => setTimeout(r, 1_000));
+  expect(await subFrames(context)).not.toContainEqual(expect.stringMatching(shownSite));
+});
+
+test('EF2: a host page that holds its reload back with beforeunload still loses the frame', async ({
+  context,
+  sw,
+  origin,
+}) => {
+  await setUp(sw, ['example.test']);
+  const host = await context.newPage();
+  await host.goto(origin('other.test') + '/frame-unload');
+  const frame = () => host.frames().find((f) => f !== host.mainFrame());
+  await expect.poll(() => frame()?.title().catch(() => '')).toBe('ORIGINAL example.test');
+  // beforeunload dialogs need a user gesture on the page. The dialog is left open (as a person
+  // away from the desk would), which holds the reload back and keeps the old document.
+  const dialogs: string[] = [];
+  host.on('dialog', (d) => void dialogs.push(d.type()));
+  await host.locator('body').click();
+  await call(sw, { type: 'lockNow' });
+  await expect.poll(() => dialogs).toEqual(['beforeunload']);
+  // By URL: a page held by its dialog cannot be asked for its frame's title. A blocked frame
+  // shows Chrome's error page, never the site's URL.
+  const shownSite = new RegExp(`^${origin('example.test').replace(/[.]/g, '\\.')}|ORIGINAL`);
+  await expect.poll(() => subFrames(context), { timeout: 10_000 }).not.toContainEqual(expect.stringMatching(shownSite));
+  // The host page itself is back, in a tab of its own.
+  await expect
+    .poll(() => context.pages().some((p) => !p.isClosed() && p.url() === origin('other.test') + '/frame-unload'))
+    .toBe(true);
+});
+
+test("EF3/EF4: in 'site' scope the extensions lock page opens the extensions page until the next relock", async ({
+  context,
+  sw,
+  extensionId,
+}) => {
+  await setUp(sw, ['example.test']);
+  await call(sw, { type: 'unlockSettings', password: PW });
+  await sw.evaluate(async () => {
+    const api = (globalThis as unknown as { __fmp: Api }).__fmp;
+    await api.saveSettings({ unlockScope: 'site' });
+    await api.applySettings(await api.getSettings());
+  });
+  // The scope change locked the sites, not the settings (the owner is in the settings page).
+  const after = (await call(sw, { type: 'getState' })).state as { unlocked: boolean; settingsUnlocked: boolean };
+  expect(after).toMatchObject({ unlocked: false, settingsUnlocked: true });
+
+  const page = await context.newPage();
+  await page.goto('chrome://extensions/').catch(() => {});
+  await expect.poll(() => page.url()).toMatch(new RegExp(`^chrome-extension://${extensionId}/lock\\.html#t=`));
+  await unlockFromPage(page);
+  await expect.poll(() => page.url()).toMatch(/^chrome:\/\/extensions/);
+  // It stays open in another tab too, until the next relock.
+  const second = await context.newPage();
+  await second.goto('chrome://extensions/');
+  await second.waitForTimeout(500);
+  expect(second.url()).toBe('chrome://extensions/');
+  await call(sw, { type: 'lockNow' });
+  const third = await context.newPage();
+  await third.goto('chrome://extensions/').catch(() => {});
+  await expect.poll(() => third.url()).toMatch(new RegExp(`^chrome-extension://${extensionId}/lock\\.html#t=`));
+});

@@ -143,6 +143,10 @@
           <p id="unlock-error" class="message error" role="alert"></p>
           <button id="unlock-submit" type="submit" data-i18n="unlockButton"></button>
         </form>
+        <details id="forgot" class="forgot">
+          <summary data-i18n="forgotSummary"></summary>
+          <p data-i18n="forgotBody"></p>
+        </details>
       </section>
 
       <!-- Unlocked: a menu (sidebar, or tab bar on a narrow screen) and one section at a time -->
@@ -231,7 +235,8 @@
 
             <section class="card" aria-labelledby="scope-title">
               <h2 id="scope-title" tabindex="-1" data-i18n="unlockScopeTitle"></h2>
-              <div class="stack-sm" role="radiogroup" aria-labelledby="scope-title">
+              <p id="scope-note" class="muted" data-i18n="unlockScopeNote"></p>
+              <div class="stack-sm" role="radiogroup" aria-labelledby="scope-title" aria-describedby="scope-note">
                 <label class="radio" for="scope-all">
                   <input id="scope-all" name="unlock-scope" type="radio" value="all" />
                   <span data-i18n="unlockScopeAll"></span>

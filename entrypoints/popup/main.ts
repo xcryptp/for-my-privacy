@@ -5,8 +5,8 @@ import { send } from '../../src/lib/messages';
 /** The command the worker listens for (`commands` in the manifest); its shortcut is shown when one is set. */
 export const LOCK_COMMAND = 'lock-now';
 
-/** How long "Locked" stays on screen before the popup closes. */
-const CLOSE_MS = 1000;
+/** How long "Locked" stays on screen, readable, before the popup closes. */
+const CLOSE_MS = 2000;
 
 /** The shortcut text of a command list: the one set for Lock now, or undefined when none is set. */
 export function shortcutOf(commands: readonly { name?: string; shortcut?: string }[]): string | undefined {

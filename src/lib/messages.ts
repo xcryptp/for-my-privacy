@@ -45,11 +45,17 @@ export type ErrorCode =
 export type Response = { ok: true; state: State } | { ok: false; error: ErrorCode; state: State };
 
 /**
+ * What an unlock on a lock page opens: a site (`domain` is its listed domain, the one a 'site'
+ * scope unlock opens), or the extensions page (in 'site' scope it stays open until the next relock).
+ */
+export type TargetKind = { kind: 'site'; domain: string } | { kind: 'extensions' };
+
+/**
  * Answer to claimTarget and describeTarget. `host` is what the page may show: the target's host
  * name, or `chrome://extensions` for the extensions page.
  */
 export type TargetResponse =
-  | { ok: true; state: State; token: string; host: string }
+  | ({ ok: true; state: State; token: string; host: string } & TargetKind)
   | { ok: false; error: ErrorCode; state: State };
 
 export type ResponseFor<R extends Request> = R extends { type: 'claimTarget' | 'describeTarget' }

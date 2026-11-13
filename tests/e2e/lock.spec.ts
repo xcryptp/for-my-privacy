@@ -263,9 +263,11 @@ test('the lock page says what one unlock opens, following the unlock setting, an
   await sw.evaluate(() =>
     (globalThis as unknown as { __fmp: Api }).__fmp.saveSettings({ unlockScope: 'site' }),
   );
+  // The page that is already open follows the change without a reload, and names the listed domain.
+  await expect(page.getByText(await ui.text('unlockHintSite', 'example.test'), { exact: true })).toBeVisible();
   const again = await context.newPage();
   await openLockPage(again, sw, extensionId, origin('www.example.test') + '/');
-  await expect(again.getByText(await ui.text('unlockHintSite', 'www.example.test'), { exact: true })).toBeVisible();
+  await expect(again.getByText(await ui.text('unlockHintSite', 'example.test'), { exact: true })).toBeVisible();
 });
 
 test('unlock scope all opens every listed site together; scope site opens only the one asked for', async ({
@@ -308,4 +310,30 @@ test('unlock scope all opens every listed site together; scope site opens only t
         .some((page) => !before.has(page) && lockPageUrl(extensionId).test(page.url())),
     )
     .toBe(true);
+});
+
+test("in 'site' scope the extensions lock page says it opens the extensions page, and does open it", async ({
+  context,
+  sw,
+  extensionId,
+}) => {
+  await lockDomains(sw, ['example.test']);
+  await sw.evaluate(() => (globalThis as unknown as { __fmp: Api }).__fmp.saveSettings({ unlockScope: 'site' }));
+  const page = await context.newPage();
+  await page.goto('chrome://extensions/').catch(() => {});
+  await expect.poll(() => page.url()).toMatch(lockPageUrl(extensionId));
+  const ui = await lockUi(page, sw);
+  await expect(page.getByText(await ui.text('unlockHintExtensions'), { exact: true })).toBeVisible();
+  await ui.field.fill(PW);
+  await ui.field.press('Enter');
+  await expect.poll(() => page.url()).toMatch(/^chrome:\/\/extensions/);
+});
+
+test("in 'all' scope the extensions lock page keeps the general line", async ({ context, sw, extensionId }) => {
+  await lockDomains(sw, ['example.test']);
+  const page = await context.newPage();
+  await page.goto('chrome://extensions/').catch(() => {});
+  await expect.poll(() => page.url()).toMatch(lockPageUrl(extensionId));
+  const ui = await lockUi(page, sw);
+  await expect(page.getByText(await ui.text('unlockHintAll'), { exact: true })).toBeVisible();
 });

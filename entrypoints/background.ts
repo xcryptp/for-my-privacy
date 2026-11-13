@@ -43,9 +43,12 @@ export default defineBackground(() => {
   browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     onTabUpdated(tabId, changeInfo, tab).catch(logErrors('tabs.onUpdated'));
   });
-  browser.webNavigation.onCommitted.addListener((details) => {
-    onFrameCommitted(details).catch(logErrors('webNavigation.onCommitted'));
-  });
+  browser.webNavigation.onCommitted.addListener(
+    (details) => {
+      onFrameCommitted(details).catch(logErrors('webNavigation.onCommitted'));
+    },
+    { url: [{ schemes: ['http', 'https'] }] },
+  );
   browser.commands.onCommand.addListener((command) => {
     onCommand(command).catch(logErrors('commands.onCommand'));
   });

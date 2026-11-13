@@ -6,9 +6,10 @@ import { send, type ErrorCode, type State } from '../../src/lib/messages';
 import { originPatterns, releasableOrigins } from '../../src/lib/origins';
 import { validatePassword } from '../../src/lib/password';
 import { normalizeDomain } from '../../src/lib/registrable-domain';
-import { DEFAULT_SETTINGS, getSettings, type Settings } from '../../src/lib/settings';
-import { saveSettingsFromInput as saveSettings } from '../../src/lib/settings-input';
+import { DEFAULT_SETTINGS, getSettings, saveSettings, type Settings } from '../../src/lib/settings';
+import { saveSettingsFromInput } from '../../src/lib/settings-input';
 import { createCountdown } from '../../src/ui/countdown';
+import { wrongPasswordText } from '../../src/ui/tries';
 import {
   ONBOARDING_KEY,
   ONBOARDING_STEPS,
@@ -55,8 +56,8 @@ export function viewFor(state: State): View {
 }
 
 /** The message for a rejected password request. */
-function errorText(code: ErrorCode): string {
-  return t(code === 'too_short' ? 'passwordTooShort' : 'wrongPassword');
+function errorText(code: ErrorCode, triesLeft?: number): string {
+  return code === 'too_short' ? t('passwordTooShort') : wrongPasswordText(triesLeft);
 }
 
 function init(): void {
@@ -156,6 +157,7 @@ function init(): void {
   let settings: Settings | undefined;
   let missingOrigins: string[] = [];
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
+  let toastFrame: number | undefined;
   // Bumped whenever the screen is decided afresh (and when settings are cleared). Async work that
   // started under an older value must not write to the page after its awaits: a relock in between
   // would otherwise bring site names back into the hidden settings, or open the settings after a
@@ -189,19 +191,22 @@ function init(): void {
   guardRow.hidden = !SETTINGS_GUARD_BUILD;
 
   function showToast(message: string): void {
-    clearTimeout(toastTimer);
+    clearToast();
     // Empty first, then fill on the next frame: a repeated "Saved." is announced again.
-    toast.textContent = '';
     const show = () => {
+      toastFrame = undefined;
       toast.textContent = message;
       toastTimer = setTimeout(() => (toast.textContent = ''), TOAST_MS);
     };
     if (document.hidden) show();
-    else requestAnimationFrame(show);
+    else toastFrame = requestAnimationFrame(show);
   }
 
+  /** Empties the toast and cancels one still waiting for its frame, so it cannot appear afterwards. */
   function clearToast(): void {
     clearTimeout(toastTimer);
+    if (toastFrame !== undefined) cancelAnimationFrame(toastFrame);
+    toastFrame = undefined;
     toast.textContent = '';
   }
 
@@ -210,14 +215,14 @@ function init(): void {
     alert: HTMLElement,
     wait: ReturnType<typeof createCountdown>,
     code: ErrorCode,
-    waitMs: number,
+    state: State,
   ): void {
     wait.stop();
-    if (waitMs > 0) {
-      wait.start(waitMs);
+    if (state.waitMs > 0) {
+      wait.start(state.waitMs);
       return;
     }
-    alert.textContent = errorText(code);
+    alert.textContent = errorText(code, state.triesLeft);
   }
 
   // ---- screens ----
@@ -338,6 +343,7 @@ function init(): void {
   function renderPreview(el: HTMLElement, raw: string): void {
     const preview = previewFor(raw);
     el.classList.toggle('invalid', preview.kind === 'invalid');
+    el.classList.toggle('broader', preview.kind === 'ok' && preview.typed !== undefined);
     el.textContent =
       preview.kind === 'ok'
         ? preview.typed
@@ -359,8 +365,13 @@ function init(): void {
     tip.textContent = '';
     clearToast();
     domainPreview.textContent = '';
-    domainPreview.classList.remove('invalid');
+    domainPreview.classList.remove('invalid', 'broader');
     for (const input of [current, next, confirm, domainInput]) input.value = '';
+    // The other controls go back to their defaults: nothing the owner chose stays in hidden markup.
+    idle.value = String(DEFAULT_SETTINGS.idleMinutes);
+    screenLock.checked = DEFAULT_SETTINGS.lockOnScreenLock;
+    guard.checked = DEFAULT_SETTINGS.settingsGuard;
+    showScope(DEFAULT_SETTINGS.unlockScope);
     changeWait.stop();
     changeSubmit.disabled = false;
     for (const el of [changeError, domainError]) el.textContent = '';
@@ -580,7 +591,7 @@ function init(): void {
       }
       const stored = await getSettings();
       if (startEpoch !== epoch) return;
-      const saved = await saveSettings({ domains: [...stored.domains, domain] });
+      const saved = await saveSettingsFromInput({ domains: [...stored.domains, domain] });
       if (startEpoch !== epoch) return;
       settings = saved;
       domainError.textContent = '';
@@ -700,7 +711,7 @@ function init(): void {
           await applyState(res.state);
           return;
         }
-        showRejection(unlockError, unlockWait, res.error, res.state.waitMs);
+        showRejection(unlockError, unlockWait, res.error, res.state);
         if (!unlockWait.active) unlockPassword.focus();
       } catch (err) {
         console.warn('unlock failed', err);
@@ -866,7 +877,10 @@ function init(): void {
   guard.addEventListener('change', () => void saveField({ settingsGuard: guard.checked }));
   for (const radio of [scopeAll, scopeSite]) {
     radio.addEventListener('change', () => {
-      if (radio.checked) void saveField({ unlockScope: radio.value === 'site' ? 'site' : 'all' });
+      // The worker locks the sites again when the scope changes (the settings stay open): say so.
+      if (radio.checked) {
+        void saveField({ unlockScope: radio.value === 'site' ? 'site' : 'all' }, () => t('unlockScopeSaved'));
+      }
     });
   }
 
@@ -897,7 +911,7 @@ function init(): void {
           return;
         }
         current.value = '';
-        showRejection(changeError, changeWait, res.error, res.state.waitMs);
+        showRejection(changeError, changeWait, res.error, res.state);
         if (!changeWait.active) current.focus();
         // The worker may have locked meanwhile; the next state check swaps the screen.
         void applyState(res.state);
