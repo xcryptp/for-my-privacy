@@ -29,8 +29,7 @@ const AUTH_KEY = 'auth';
 const MIN_IDLE_MINUTES = 1;
 const MAX_IDLE_MINUTES = 60;
 
-function cleanDomains(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
+function cleanDomains(value: unknown[]): string[] {
   const out = new Set<string>();
   for (const item of value) {
     if (typeof item !== 'string') continue;
@@ -40,45 +39,82 @@ function cleanDomains(value: unknown): string[] {
   return [...out];
 }
 
-function cleanIdleMinutes(value: unknown): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_SETTINGS.idleMinutes;
-  return Math.min(MAX_IDLE_MINUTES, Math.max(MIN_IDLE_MINUTES, Math.round(value)));
-}
-
-function cleanSettings(raw: unknown): Settings {
-  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-  return {
-    domains: Array.isArray(r.domains) ? cleanDomains(r.domains) : [...DEFAULT_SETTINGS.domains],
-    idleMinutes: cleanIdleMinutes(r.idleMinutes),
-    lockOnScreenLock:
-      typeof r.lockOnScreenLock === 'boolean' ? r.lockOnScreenLock : DEFAULT_SETTINGS.lockOnScreenLock,
-    settingsGuard: typeof r.settingsGuard === 'boolean' ? r.settingsGuard : DEFAULT_SETTINGS.settingsGuard,
-  };
-}
+// Each field validator returns the cleaned value, or undefined when the value is not
+// usable. On write an unusable patch value keeps the stored value (never the default),
+// so a bad call cannot unlock sites or reset the wrong-password wait.
+const SETTINGS_FIELDS: { [K in keyof Settings]: (value: unknown) => Settings[K] | undefined } = {
+  domains: (v) => (Array.isArray(v) ? cleanDomains(v) : undefined),
+  idleMinutes: (v) =>
+    typeof v === 'number' && Number.isFinite(v)
+      ? Math.min(MAX_IDLE_MINUTES, Math.max(MIN_IDLE_MINUTES, Math.round(v)))
+      : undefined,
+  lockOnScreenLock: (v) => (typeof v === 'boolean' ? v : undefined),
+  settingsGuard: (v) => (typeof v === 'boolean' ? v : undefined),
+};
 
 function isPasswordRecord(value: unknown): value is PasswordRecord {
   if (!value || typeof value !== 'object') return false;
   const r = value as Record<string, unknown>;
+  // Same acceptance rule as verifyPassword, so a corrupted record reads as null.
   return (
     r.v === 1 &&
     typeof r.salt === 'string' &&
+    r.salt.length > 0 &&
     typeof r.hash === 'string' &&
+    r.hash.length > 0 &&
     typeof r.iterations === 'number' &&
-    Number.isFinite(r.iterations)
+    Number.isInteger(r.iterations) &&
+    r.iterations >= 1
   );
 }
 
-function cleanCount(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
+const AUTH_FIELDS: { [K in keyof Auth]: (value: unknown) => Auth[K] | undefined } = {
+  password: (v) => (v === null ? null : isPasswordRecord(v) ? v : undefined),
+  failures: (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined),
+  blockedUntil: (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined),
+};
+
+function asRecord(raw: unknown): Record<string, unknown> {
+  return raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+}
+
+/** Per field: the cleaned value when usable, otherwise the fallback's value. */
+function cleanFields<T extends object>(
+  raw: unknown,
+  validators: { [K in keyof T]: (value: unknown) => T[K] | undefined },
+  fallback: (key: keyof T) => T[keyof T],
+): T {
+  const r = asRecord(raw);
+  const out = {} as T;
+  for (const key of Object.keys(validators) as (keyof T)[]) {
+    const cleaned = validators[key](r[key as string]);
+    out[key] = (cleaned === undefined ? fallback(key) : cleaned) as T[keyof T];
+  }
+  return out;
+}
+
+function cleanSettings(raw: unknown): Settings {
+  return cleanFields<Settings>(raw, SETTINGS_FIELDS, (key) =>
+    key === 'domains' ? [] : DEFAULT_SETTINGS[key],
+  );
 }
 
 function cleanAuth(raw: unknown): Auth {
-  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-  return {
-    password: isPasswordRecord(r.password) ? r.password : DEFAULT_AUTH.password,
-    failures: cleanCount(r.failures),
-    blockedUntil: cleanCount(r.blockedUntil),
-  };
+  return cleanFields<Auth>(raw, AUTH_FIELDS, (key) => DEFAULT_AUTH[key]);
+}
+
+/** Overlay the usable fields of a patch on the current value; skip undefined and invalid ones. */
+function applyPatch<T extends object>(
+  current: T,
+  patch: Partial<T>,
+  validators: { [K in keyof T]: (value: unknown) => T[K] | undefined },
+): T {
+  const next = { ...current };
+  for (const key of Object.keys(validators) as (keyof T)[]) {
+    const cleaned = validators[key](asRecord(patch)[key as string]);
+    if (cleaned !== undefined) next[key] = cleaned;
+  }
+  return next;
 }
 
 export async function getSettings(): Promise<Settings> {
@@ -87,7 +123,7 @@ export async function getSettings(): Promise<Settings> {
 }
 
 export async function saveSettings(patch: Partial<Settings>): Promise<Settings> {
-  const next = cleanSettings({ ...(await getSettings()), ...patch });
+  const next = applyPatch(await getSettings(), patch, SETTINGS_FIELDS);
   await browser.storage.local.set({ [SETTINGS_KEY]: next });
   return next;
 }
@@ -98,7 +134,7 @@ export async function getAuth(): Promise<Auth> {
 }
 
 export async function saveAuth(patch: Partial<Auth>): Promise<Auth> {
-  const next = cleanAuth({ ...(await getAuth()), ...patch });
+  const next = applyPatch(await getAuth(), patch, AUTH_FIELDS);
   await browser.storage.local.set({ [AUTH_KEY]: next });
   return next;
 }

@@ -45,6 +45,26 @@ describe('settings', () => {
     expect(s.idleMinutes).toBe(60);
   });
 
+  it('keeps the stored value for an undefined or wrongly typed patch field', async () => {
+    await saveSettings({ domains: ['a.com'], idleMinutes: 10, lockOnScreenLock: false });
+    expect((await saveSettings({ domains: undefined })).domains).toEqual(['a.com']);
+    expect((await saveSettings({ domains: 'x' as any })).domains).toEqual(['a.com']);
+    expect((await saveSettings({ idleMinutes: Number.NaN })).idleMinutes).toBe(10);
+    expect((await saveSettings({ idleMinutes: undefined })).idleMinutes).toBe(10);
+    expect((await saveSettings({ lockOnScreenLock: 'no' as any })).lockOnScreenLock).toBe(false);
+    expect(await getSettings()).toEqual({
+      domains: ['a.com'],
+      idleMinutes: 10,
+      lockOnScreenLock: false,
+      settingsGuard: true,
+    });
+  });
+
+  it('still clears the list with an explicit empty array', async () => {
+    await saveSettings({ domains: ['a.com'] });
+    expect((await saveSettings({ domains: [] })).domains).toEqual([]);
+  });
+
   it('does not mutate DEFAULT_SETTINGS', async () => {
     const s = await getSettings();
     s.domains.push('x.com');
@@ -63,6 +83,36 @@ describe('auth', () => {
     expect(saved).toEqual({ password, failures: 2, blockedUntil: 0 });
     expect(await getAuth()).toEqual(saved);
     expect(await saveAuth({ blockedUntil: 123 })).toEqual({ password, failures: 2, blockedUntil: 123 });
+  });
+
+  it('keeps the stored password and counters for undefined or invalid patch fields', async () => {
+    const password = { v: 1 as const, salt: 'c2FsdA==', iterations: 600000, hash: 'aGFzaA==' };
+    await saveAuth({ password, failures: 4, blockedUntil: 99 });
+    expect((await saveAuth({ password: undefined })).password).toEqual(password);
+    expect((await saveAuth({ password: { v: 1, salt: '', iterations: 1, hash: 'x' } })).password).toEqual(password);
+    expect((await saveAuth({ failures: Number.NaN })).failures).toBe(4);
+    expect((await saveAuth({ failures: -1 })).failures).toBe(4);
+    expect((await saveAuth({ blockedUntil: 'x' as any })).blockedUntil).toBe(99);
+    expect(await getAuth()).toEqual({ password, failures: 4, blockedUntil: 99 });
+  });
+
+  it('clears the password only with an explicit null', async () => {
+    const password = { v: 1 as const, salt: 'c2FsdA==', iterations: 600000, hash: 'aGFzaA==' };
+    await saveAuth({ password });
+    expect((await saveAuth({ password: null })).password).toBeNull();
+  });
+
+  it('reads a record verifyPassword would reject as null', async () => {
+    for (const bad of [
+      { v: 1, salt: 'c2FsdA==', iterations: 0, hash: 'aGFzaA==' },
+      { v: 1, salt: 'c2FsdA==', iterations: 1.5, hash: 'aGFzaA==' },
+      { v: 1, salt: '', iterations: 1, hash: 'aGFzaA==' },
+      { v: 1, salt: 'c2FsdA==', iterations: 1, hash: '' },
+      { v: 2, salt: 'c2FsdA==', iterations: 1, hash: 'aGFzaA==' },
+    ]) {
+      await browser.storage.local.set({ auth: { password: bad, failures: 1, blockedUntil: 0 } });
+      expect((await getAuth()).password).toBeNull();
+    }
   });
 
   it('falls back to defaults for bad stored values', async () => {
