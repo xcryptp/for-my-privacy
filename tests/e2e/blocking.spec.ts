@@ -1,11 +1,11 @@
-import type { Page, Worker } from '@playwright/test';
+import type { BrowserContext, Page, Worker } from '@playwright/test';
 import { test, expect } from './fixtures';
 
 type Api = {
   setUnlocked: (domains: string[]) => Promise<void>;
   clearUnlocked: () => Promise<void>;
   isUnlocked: () => Promise<boolean>;
-  handleMessage: (req: unknown, sender: unknown) => Promise<{ state: { hasPassword: boolean } }>;
+  handleMessage: (req: unknown, sender: unknown) => Promise<{ ok: boolean; state: { hasPassword: boolean } }>;
   saveSettings: (patch: unknown) => Promise<unknown>;
   applySettings: (settings: unknown) => Promise<void>;
   getSettings: () => Promise<unknown>;
@@ -13,7 +13,8 @@ type Api = {
 
 // The worker owns the rules (it re-syncs them on start and on settings changes, and blocks
 // nothing before a password exists), so tests lock domains the way the options page does:
-// a password, then the domain list. Setup unlocks, so the helper locks again at the end.
+// a password, then the domain list. Setup opens only the settings; the helper still ends with a
+// lockNow so every test starts from a relock.
 const sync = (sw: Worker, domains: string[]) =>
   sw.evaluate(async (d) => {
     const api = (globalThis as unknown as { __fmp: Api }).__fmp;
@@ -151,4 +152,103 @@ test('B9b: an iframe of a locked domain does not load, even inside an unlocked p
   await expect.poll(() => frame!.url()).toBe('chrome-error://chromewebdata/');
   expect(frame!.url()).not.toBe(origin('example.test') + '/');
   expect(await frame!.title().catch(() => '')).not.toBe('ORIGINAL example.test');
+});
+
+// Instagram-style sites register a service worker that answers navigations from its cache, so a
+// typed navigation never reaches the network and the redirect rule never sees it.
+async function installSiteWorker(context: BrowserContext, sw: Worker, origin: (host: string) => string) {
+  const res = await sw.evaluate(
+    (pw) => (globalThis as unknown as { __fmp: Api }).__fmp.handleMessage({ type: 'unlock', password: pw }, {}),
+    'correct horse',
+  );
+  expect(res.ok).toBe(true);
+  // While unlocked the site installs its service worker and it takes control of the page.
+  const site = await context.newPage();
+  await site.goto(origin('example.test') + '/sw-page');
+  await site.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
+  await site.reload();
+  await expect.poll(() => site.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
+
+  // A page that is not locked, loaded while unlocked, can reach the site's data.
+  const other = await context.newPage();
+  await other.goto(origin('other.test') + '/');
+  const fetchApi = () =>
+    other.evaluate(
+      (u) => fetch(u).then((r) => r.text(), (e: Error) => `failed: ${e.message}`),
+      origin('example.test') + '/api',
+    );
+  expect(await fetchApi()).toBe('{"data":"SECRET"}');
+  return { fetchApi };
+}
+
+/** Types the cached page into a new tab; it must end on the lock page and nothing shows the site. */
+async function expectTypedPageLocked(context: BrowserContext, extensionId: string, url: string) {
+  // The relock sent the site's tab to the lock page; close it so only the new tab can show one.
+  const lockUrl = `chrome-extension://${extensionId}/lock.html#u=${url}`;
+  for (const p of context.pages()) if (p.url() === lockUrl) await p.close();
+  const typed = await context.newPage();
+  await typed.goto(url).catch(() => {});
+  await expect.soft
+    .poll(() => context.pages().some((p) => !p.isClosed() && p.url() === lockUrl), { timeout: 5_000 })
+    .toBe(true);
+  await new Promise((r) => setTimeout(r, 500));
+  for (const p of context.pages()) {
+    if (p.isClosed()) continue;
+    expect.soft(await p.title().catch(() => ''), p.url()).not.toBe('ORIGINAL example.test');
+  }
+}
+
+const lockNow = (sw: Worker) =>
+  sw.evaluate(() => (globalThis as unknown as { __fmp: Api }).__fmp.handleMessage({ type: 'lockNow' }, {}));
+
+test('B10: a site service worker cannot show a locked page or fetch its data after a relock', async ({
+  context,
+  sw,
+  extensionId,
+  origin,
+}) => {
+  await sync(sw, ['example.test']);
+  const { fetchApi } = await installSiteWorker(context, sw, origin);
+  await lockNow(sw);
+
+  // (a) A new tab typed to the page the service worker cached shows the lock page, not the page.
+  await expectTypedPageLocked(context, extensionId, origin('example.test') + '/sw-page');
+  // (b) The site's data cannot be fetched any more, even from a page loaded while unlocked.
+  expect(await fetchApi()).toMatch(/^failed: /);
+
+  // (c) The relock removed the site's service worker: once unlocked again, a page of the site
+  // is not controlled and finds no registration.
+  await unlock(sw, ['example.test']);
+  const page = await context.newPage();
+  await page.goto(origin('example.test') + '/');
+  await expect(page).toHaveTitle('ORIGINAL example.test');
+  expect(await page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(false);
+  expect(await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length)).toBe(0);
+});
+
+test('B11: without the service-worker removal, the tab guard and the rules still keep the site locked', async ({
+  context,
+  sw,
+  extensionId,
+  origin,
+}) => {
+  await sync(sw, ['example.test']);
+  const { fetchApi } = await installSiteWorker(context, sw, origin);
+  // Make the removal fail, so the site's service worker survives the relock.
+  await sw.evaluate(() => {
+    (globalThis as unknown as { chrome: { browsingData: { remove: unknown } } }).chrome.browsingData.remove =
+      async () => {
+        throw new Error('disabled by the test');
+      };
+  });
+  await lockNow(sw);
+  // The service worker answers the navigation from its cache; tabs.onUpdated replaces the tab.
+  await expectTypedPageLocked(context, extensionId, origin('example.test') + '/sw-page');
+  expect(await fetchApi()).toMatch(/^failed: /);
+
+  // Check the premise: the service worker really survived, so the network rules never saw the page.
+  await unlock(sw, ['example.test']);
+  const page = await context.newPage();
+  await page.goto(origin('example.test') + '/');
+  expect(await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length)).toBe(1);
 });

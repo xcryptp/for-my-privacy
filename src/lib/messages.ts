@@ -4,13 +4,19 @@ import { browser } from 'wxt/browser';
 export type Request =
   | { type: 'getState' }
   | { type: 'setup'; password: string }
+  // From the lock page: unlocks the sites and the settings.
   | { type: 'unlock'; password: string; returnTo?: string }
+  // From the options page: unlocks the settings only; the sites stay locked.
+  | { type: 'unlockSettings'; password: string }
   | { type: 'lockNow' }
   | { type: 'changePassword'; current: string; next: string };
 
 export interface State {
   hasPassword: boolean;
+  /** The locked sites are reachable (the session unlock rule exists). */
   unlocked: boolean;
+  /** The options page may show and change the settings. */
+  settingsUnlocked: boolean;
   waitMs: number;
   settingsGuardAvailable: boolean;
 }
@@ -28,6 +34,7 @@ export function isRequest(value: unknown): value is Request {
     case 'lockNow':
       return true;
     case 'setup':
+    case 'unlockSettings':
       return typeof v.password === 'string';
     case 'unlock':
       return typeof v.password === 'string' && (v.returnTo === undefined || typeof v.returnTo === 'string');

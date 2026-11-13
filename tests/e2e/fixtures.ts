@@ -19,6 +19,8 @@ const HOST_MAP = [
   'other.test',
 ];
 const HOST_RESOLVER_RULES = HOST_MAP.map((h) => `MAP ${h} 127.0.0.1`).join(', ');
+// Origins treated as secure so their pages can register a service worker.
+const SW_HOSTS = ['example.test', 'www.example.test', 'm.example.test'];
 
 type BrowserState = {
   context: BrowserContext;
@@ -58,8 +60,38 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       const server = http.createServer((req, res) => {
         const host = (req.headers.host ?? 'unknown').replace(/:\d+$/, '');
         const port = (server.address() as AddressInfo).port;
+        const pathname = req.url?.split('?')[0];
+        if (pathname === '/sw.js') {
+          // The site's own service worker: caches /sw-page and answers navigations from the
+          // cache, so a navigation it serves never reaches the network (or declarativeNetRequest).
+          res.setHeader('content-type', 'text/javascript');
+          res.end(`
+self.addEventListener('install', (e) => {
+  self.skipWaiting();
+  e.waitUntil(caches.open('fmp-e2e').then((c) => c.add('/sw-page')));
+});
+self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', (e) => {
+  if (e.request.mode === 'navigate') {
+    e.respondWith(caches.match('/sw-page').then((r) => r || fetch(e.request)));
+  }
+});`);
+          return;
+        }
+        if (pathname === '/api') {
+          res.setHeader('content-type', 'application/json');
+          res.setHeader('access-control-allow-origin', '*');
+          res.end('{"data":"SECRET"}');
+          return;
+        }
         res.setHeader('content-type', 'text/html; charset=utf-8');
-        if (req.url?.split('?')[0] === '/frame') {
+        if (pathname === '/sw-page') {
+          res.end(
+            `<!doctype html><title>ORIGINAL ${host}</title><body>ORIGINAL-PAGE<script>navigator.serviceWorker.register('/sw.js')</script></body>`,
+          );
+          return;
+        }
+        if (pathname === '/frame') {
           res.end(
             `<!doctype html><title>ORIGINAL ${host}</title><body><iframe src="http://example.test:${port}/"></iframe></body>`,
           );
@@ -75,8 +107,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   ],
 
   // The browser state lives in one holder so relaunch() can swap context and sw in place.
-  // eslint-disable-next-line no-empty-pattern
-  browserState: async ({}, use) => {
+  browserState: async ({ server }, use) => {
     const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fmp-e2e-'));
     const state = {
       async launch() {
@@ -91,6 +122,8 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
             `--disable-extensions-except=${EXTENSION_DIR}`,
             `--load-extension=${EXTENSION_DIR}`,
             `--host-resolver-rules=${HOST_RESOLVER_RULES}`,
+            // navigator.serviceWorker needs a secure context; the test server is plain http.
+            `--unsafely-treat-insecure-origin-as-secure=${SW_HOSTS.map((h) => `http://${h}:${server.port}`).join(',')}`,
           ],
         });
         state.context = ctx;

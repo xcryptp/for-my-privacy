@@ -1,12 +1,34 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { browser } from 'wxt/browser';
 import {
+  ALL_RESOURCE_TYPES,
   RULE_FALLBACK_BLOCK,
+  RULE_UNLOCK,
   RULE_REDIRECT,
   buildBlockRules,
   domainsWithHostAccess,
+  setUnlocked,
   syncBlockRules,
 } from '../../src/lib/rules';
+
+// Every declarativeNetRequest resource type Chrome 120 supports.
+const EVERY_TYPE = [
+  'main_frame',
+  'sub_frame',
+  'stylesheet',
+  'script',
+  'image',
+  'font',
+  'object',
+  'xmlhttprequest',
+  'ping',
+  'csp_report',
+  'media',
+  'websocket',
+  'webtransport',
+  'webbundle',
+  'other',
+];
 
 const BASE = 'chrome-extension://abc/lock.html';
 
@@ -20,7 +42,7 @@ const redirectRule = (domains: string[]) => ({
 const blockRule = (domains: string[]) => ({
   id: RULE_FALLBACK_BLOCK,
   priority: 1,
-  condition: { requestDomains: domains, resourceTypes: ['main_frame', 'sub_frame'] },
+  condition: { requestDomains: domains, resourceTypes: EVERY_TYPE },
   action: { type: 'block' },
 });
 
@@ -45,6 +67,39 @@ describe('buildBlockRules', () => {
 
   it('returns only the block rule when no domain has host access', () => {
     expect(buildBlockRules(['noperm.test'], [], BASE)).toEqual([blockRule(['noperm.test'])]);
+  });
+});
+
+describe('resource types', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('lists every resource type once', () => {
+    expect([...ALL_RESOURCE_TYPES].sort()).toEqual([...EVERY_TYPE].sort());
+  });
+
+  it('the block rule covers every type, the redirect only top-level navigations', () => {
+    const [redirect, block] = buildBlockRules(['example.test'], ['example.test'], BASE);
+    expect(redirect?.condition.resourceTypes).toEqual(['main_frame']);
+    expect(block?.condition.resourceTypes).toEqual(EVERY_TYPE);
+  });
+
+  it('the unlock rule allows every type, so nothing of an unlocked site is blocked', async () => {
+    const updateSessionRules = vi.fn(async (_options: unknown) => {});
+    (browser as unknown as { declarativeNetRequest: unknown }).declarativeNetRequest = { updateSessionRules };
+    await setUnlocked(['example.test']);
+    expect(updateSessionRules).toHaveBeenCalledWith({
+      removeRuleIds: [RULE_UNLOCK],
+      addRules: [
+        {
+          id: RULE_UNLOCK,
+          priority: 3,
+          condition: { requestDomains: ['example.test'], resourceTypes: EVERY_TYPE },
+          action: { type: 'allow' },
+        },
+      ],
+    });
   });
 });
 

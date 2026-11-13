@@ -5,6 +5,7 @@ import background from '../../entrypoints/background';
 import {
   applySettings,
   handleMessage,
+  onBrowserStart,
   onIdleStateChanged,
   onInstalled,
   onPermissionsRemoved,
@@ -12,8 +13,10 @@ import {
   onTabReplaced,
   onTabUpdated,
   relock,
+  siteDataOrigins,
   tabsToRelock,
 } from '../../src/background/engine';
+import { isRequest } from '../../src/lib/messages';
 import { createRecord, verifyPassword } from '../../src/lib/password';
 import { RULE_FALLBACK_BLOCK, RULE_REDIRECT, RULE_UNLOCK } from '../../src/lib/rules';
 import { DEFAULT_SETTINGS, getAuth, saveAuth, saveSettings } from '../../src/lib/settings';
@@ -44,6 +47,8 @@ function installChrome() {
     getDynamicRules: vi.fn(async () => state.dynamic),
   };
   (browser as unknown as { declarativeNetRequest: unknown }).declarativeNetRequest = dnr;
+  const browsingData = { remove: vi.fn(async (_options: unknown, _types: unknown) => {}) };
+  (browser as unknown as { browsingData: unknown }).browsingData = browsingData;
 
   const listeners = {
     idle: [] as Listener[],
@@ -61,7 +66,7 @@ function installChrome() {
     .spyOn(browser.idle, 'setDetectionInterval')
     .mockImplementation((() => undefined) as never);
   const openOptionsPage = vi.spyOn(browser.runtime, 'openOptionsPage').mockImplementation((async () => {}) as never);
-  return { state, dnr, listeners, setDetectionInterval, openOptionsPage };
+  return { state, dnr, browsingData, listeners, setDetectionInterval, openOptionsPage };
 }
 
 let chrome: ReturnType<typeof installChrome>;
@@ -87,16 +92,27 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   delete (browser as unknown as { declarativeNetRequest?: unknown }).declarativeNetRequest;
+  delete (browser as unknown as { browsingData?: unknown }).browsingData;
 });
+
+const settingsUnlocked = async () => (await handleMessage({ type: 'getState' }, {})).state.settingsUnlocked;
 
 describe('handleMessage: setup', () => {
   it('stores a record, starts blocking and rejects a second setup with already_set', async () => {
     await saveSettings({ domains: ['example.test'] });
     const first = await handleMessage({ type: 'setup', password: PW }, {});
+    // Setup opens the settings only; the sites are locked from the start.
     expect(first).toEqual({
       ok: true,
-      state: { hasPassword: true, unlocked: true, waitMs: 0, settingsGuardAvailable: SETTINGS_GUARD_BUILD },
+      state: {
+        hasPassword: true,
+        unlocked: false,
+        settingsUnlocked: true,
+        waitMs: 0,
+        settingsGuardAvailable: SETTINGS_GUARD_BUILD,
+      },
     });
+    expect(chrome.state.session).toEqual([]);
     const auth = await getAuth();
     expect(auth.password).not.toBeNull();
     expect(await verifyPassword(PW, auth.password!)).toBe(true);
@@ -251,6 +267,80 @@ describe('handleMessage: unlock', () => {
   });
 });
 
+describe('handleMessage: unlock and unlockSettings are separate', () => {
+  it('unlock opens the sites only, not the settings', async () => {
+    await seedUnlocked(['example.test']);
+    expect(await handleMessage({ type: 'getState' }, {})).toMatchObject({
+      state: { unlocked: true, settingsUnlocked: false },
+    });
+  });
+
+  it('unlockSettings opens the settings only: no unlock rule and no navigation', async () => {
+    const update = vi.spyOn(browser.tabs, 'update').mockImplementation((async () => ({})) as never);
+    await seedPassword({ failures: 3 });
+    await saveSettings({ domains: ['example.test'] });
+    const res = await handleMessage({ type: 'unlockSettings', password: PW }, { tab: { id: 4 }, frameId: 0 });
+    expect(res).toMatchObject({ ok: true, state: { unlocked: false, settingsUnlocked: true } });
+    expect(chrome.state.session).toEqual([]);
+    expect(chrome.dnr.updateSessionRules).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+    expect(await getAuth()).toMatchObject({ failures: 0, blockedUntil: 0 });
+  });
+
+  it('unlockSettings returns not_set before a password exists', async () => {
+    expect(await handleMessage({ type: 'unlockSettings', password: PW }, {})).toMatchObject({
+      ok: false,
+      error: 'not_set',
+      state: { settingsUnlocked: false },
+    });
+  });
+
+  it('unlockSettings counts wrong answers and shares the wait with unlock', async () => {
+    const now = 2_000_000;
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+    await seedPassword({ failures: 3 });
+    const wrong = await handleMessage({ type: 'unlockSettings', password: WRONG }, {});
+    expect(wrong).toMatchObject({ ok: false, error: 'wrong_password', state: { settingsUnlocked: false } });
+    // The fifth wrong answer overall (one from the lock page) starts the wait for both.
+    await handleMessage({ type: 'unlock', password: WRONG }, {});
+    expect(await getAuth()).toMatchObject({ failures: 5, blockedUntil: now + 30_000 });
+    const waiting = await handleMessage({ type: 'unlockSettings', password: PW }, {});
+    expect(waiting).toMatchObject({ ok: false, error: 'too_many_attempts', state: { settingsUnlocked: false } });
+    expect((await getAuth()).failures).toBe(5);
+  });
+
+  it('serializes parallel unlockSettings and unlock attempts', async () => {
+    await seedPassword({ failures: 3 });
+    const results = await Promise.all([
+      handleMessage({ type: 'unlockSettings', password: WRONG }, {}),
+      handleMessage({ type: 'unlock', password: WRONG }, {}),
+      handleMessage({ type: 'unlockSettings', password: PW }, {}),
+    ]);
+    expect(results.map((r) => (r.ok ? 'ok' : r.error))).toEqual([
+      'wrong_password',
+      'wrong_password',
+      'too_many_attempts',
+    ]);
+  });
+
+  it('ignores unlockSettings from a frame: nothing unlocked, no attempt counted', async () => {
+    await seedPassword();
+    for (const sender of [{ tab: { id: 7 }, frameId: 3 }, { tab: { id: 7 } }]) {
+      for (const password of [PW, WRONG]) {
+        const res = await handleMessage({ type: 'unlockSettings', password }, sender);
+        expect(res).toMatchObject({ ok: false, error: 'wrong_password', state: { settingsUnlocked: false } });
+      }
+    }
+    expect(await getAuth()).toMatchObject({ failures: 0, blockedUntil: 0 });
+  });
+
+  it('isRequest accepts unlockSettings with a string password only', () => {
+    expect(isRequest({ type: 'unlockSettings', password: PW })).toBe(true);
+    expect(isRequest({ type: 'unlockSettings' })).toBe(false);
+    expect(isRequest({ type: 'unlockSettings', password: 1 })).toBe(false);
+  });
+});
+
 describe('handleMessage: changePassword, lockNow, getState', () => {
   it('changePassword requires the current password and counts wrong answers', async () => {
     await seedPassword();
@@ -281,11 +371,33 @@ describe('handleMessage: changePassword, lockNow, getState', () => {
     });
   });
 
-  it('lockNow clears the unlock rule', async () => {
+  it('lockNow clears the unlock rule and the settings unlock', async () => {
     await seedUnlocked(['example.test']);
+    await handleMessage({ type: 'unlockSettings', password: PW }, {});
+    expect(await settingsUnlocked()).toBe(true);
     const res = await handleMessage({ type: 'lockNow' }, {});
-    expect(res).toMatchObject({ ok: true, state: { unlocked: false } });
+    expect(res).toMatchObject({ ok: true, state: { unlocked: false, settingsUnlocked: false } });
     expect(chrome.state.session).toEqual([]);
+  });
+
+  it('every relock clears the settings unlock, even before a sweep can run', async () => {
+    await seedPassword();
+    for (const reason of ['idle', 'screen', 'windows', 'update'] as const) {
+      await handleMessage({ type: 'unlockSettings', password: PW }, {});
+      expect(await settingsUnlocked()).toBe(true);
+      await relock(reason);
+      expect(await settingsUnlocked(), reason).toBe(false);
+    }
+  });
+
+  it('a relock still locks the settings when the key cannot be removed', async () => {
+    await seedPassword();
+    await handleMessage({ type: 'unlockSettings', password: PW }, {});
+    vi.spyOn(browser.storage.session, 'remove').mockImplementation((async () => {
+      throw new Error('session storage down');
+    }) as never);
+    await relock('idle');
+    expect(await settingsUnlocked()).toBe(false);
   });
 
   it('getState reports the remaining wait', async () => {
@@ -293,7 +405,13 @@ describe('handleMessage: changePassword, lockNow, getState', () => {
     await seedPassword({ failures: 5, blockedUntil: 35_000 });
     expect(await handleMessage({ type: 'getState' }, {})).toEqual({
       ok: true,
-      state: { hasPassword: true, unlocked: false, waitMs: 30_000, settingsGuardAvailable: SETTINGS_GUARD_BUILD },
+      state: {
+        hasPassword: true,
+        unlocked: false,
+        settingsUnlocked: false,
+        waitMs: 30_000,
+        settingsGuardAvailable: SETTINGS_GUARD_BUILD,
+      },
     });
   });
 });
@@ -857,8 +975,16 @@ describe('tabs that showed a locked site (back/forward cache)', () => {
     await seedUnlocked(['example.test']);
     // Another worker life stored tab 4; this worker has not seen it.
     await browser.storage.session.set({ [KEY]: [4] });
-    vi.spyOn(browser.storage.session, 'get').mockImplementationOnce((async () => {
-      throw new Error('session storage down');
+    // The next read of the stored tab set fails (other keys read normally).
+    const session = browser.storage.session;
+    const get = session.get.bind(session);
+    let failNext = true;
+    vi.spyOn(session, 'get').mockImplementation((async (key: unknown) => {
+      if (key === KEY && failNext) {
+        failNext = false;
+        throw new Error('session storage down');
+      }
+      return get(key as never);
     }) as never);
     await onTabUpdated(5, { url: 'https://example.test/' });
     expect(await stored()).toEqual([4]);
@@ -908,5 +1034,240 @@ describe('extension update', () => {
     const remove = vi.spyOn(browser.tabs, 'remove').mockImplementation((async () => {}) as never);
     await onInstalled({ reason: 'update' });
     expect(remove).not.toHaveBeenCalled();
+  });
+});
+
+describe('service workers and caches of locked sites (L1)', () => {
+  beforeEach(forgetTrackedTabs);
+  type FakeTab = { id: number; windowId: number; index: number; pinned: boolean; active: boolean; url: string };
+  const BASE_ORIGINS = [
+    'http://example.test',
+    'https://example.test',
+    'http://www.example.test',
+    'https://www.example.test',
+    'http://m.example.test',
+    'https://m.example.test',
+  ];
+
+  function stubTabs(tabs: FakeTab[]) {
+    vi.spyOn(browser.tabs, 'query').mockImplementation((async () => tabs) as never);
+    const create = vi.spyOn(browser.tabs, 'create').mockImplementation((async () => ({ id: 99 })) as never);
+    const remove = vi.spyOn(browser.tabs, 'remove').mockImplementation((async () => {}) as never);
+    return { create, remove };
+  }
+  const removedOrigins = (call = 0) =>
+    (chrome.browsingData.remove.mock.calls[call]?.[0] as { origins: string[] } | undefined)?.origins;
+
+  it('siteDataOrigins lists http and https for the domain, www. and m., plus extra http(s) origins', () => {
+    expect(siteDataOrigins(['example.test'])).toEqual(BASE_ORIGINS);
+    expect(
+      siteDataOrigins(
+        ['example.test'],
+        [
+          'http://example.test:8080/feed?x=1',
+          'https://shop.example.test/a',
+          'view-source:https://cdn.example.test/',
+          'chrome://newtab/',
+          'not a url',
+          'https://example.test/',
+        ],
+      ),
+    ).toEqual([...BASE_ORIGINS, 'http://example.test:8080', 'https://shop.example.test', 'https://cdn.example.test']);
+    expect(siteDataOrigins([], [])).toEqual([]);
+  });
+
+  it('a relock removes only service workers and caches of the listed, shown and open locked origins', async () => {
+    await seedUnlocked(['example.test']);
+    // A tab showed the site on a port, then closed: its service worker stays on disk.
+    await onTabUpdated(5, { url: 'http://example.test:8080/feed' });
+    await onTabRemoved(5);
+    await onTabUpdated(6, { url: 'https://notexample.test/' });
+    stubTabs([{ id: 1, windowId: 1, index: 0, pinned: false, active: true, url: 'https://shop.example.test/a' }]);
+    await relock('idle');
+    expect(chrome.browsingData.remove).toHaveBeenCalledTimes(1);
+    const [options, types] = chrome.browsingData.remove.mock.calls[0]!;
+    expect(types).toEqual({ serviceWorkers: true, cacheStorage: true });
+    expect(Object.keys(options as object)).toEqual(['origins']);
+    expect([...removedOrigins()!].sort()).toEqual(
+      [...BASE_ORIGINS, 'http://example.test:8080', 'https://shop.example.test'].sort(),
+    );
+  });
+
+  it('a failed removal never stops the relock, and its origins are tried again next time', async () => {
+    await seedUnlocked(['example.test']);
+    await onTabUpdated(5, { url: 'http://example.test:8080/' });
+    const { remove } = stubTabs([
+      { id: 3, windowId: 1, index: 0, pinned: false, active: true, url: 'https://example.test/' },
+    ]);
+    chrome.browsingData.remove.mockImplementationOnce(async () => {
+      throw new Error('browsingData failed');
+    });
+    await expect(relock('idle')).resolves.toBeUndefined();
+    expect(chrome.state.session).toEqual([]);
+    expect(remove.mock.calls.map((c) => c[0])).toEqual([3]);
+
+    stubTabs([]);
+    await relock('idle');
+    expect(removedOrigins(1)).toContain('http://example.test:8080');
+    // Removed now, so the third relock asks only for the listed domains.
+    await relock('idle');
+    expect(removedOrigins(2)).toEqual(BASE_ORIGINS);
+  });
+
+  it('a removal that hangs does not hold the relock queue', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      await seedUnlocked(['example.test']);
+      stubTabs([]);
+      chrome.browsingData.remove.mockImplementationOnce(() => new Promise(() => {}));
+      let done = false;
+      const lock = relock('idle').then(() => (done = true));
+      await vi.advanceTimersByTimeAsync(9_000);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(1_500);
+      await lock;
+      expect(done).toBe(true);
+      expect(chrome.state.session).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('removes nothing before a password exists', async () => {
+    await saveSettings({ domains: ['example.test'] });
+    stubTabs([]);
+    await relock('idle');
+    expect(chrome.browsingData.remove).not.toHaveBeenCalled();
+  });
+
+  it('browser start removes the listed sites’ service workers while locked, not while unlocked', async () => {
+    await seedPassword();
+    await saveSettings({ domains: ['example.test'] });
+    vi.spyOn(browser.tabs, 'query').mockImplementation((async () => []) as never);
+    await onBrowserStart();
+    expect(removedOrigins()).toEqual(BASE_ORIGINS);
+
+    chrome.browsingData.remove.mockClear();
+    await handleMessage({ type: 'unlock', password: PW }, {});
+    await onBrowserStart();
+    expect(chrome.browsingData.remove).not.toHaveBeenCalled();
+  });
+
+  it('browser start removes nothing before a password exists', async () => {
+    await saveSettings({ domains: ['example.test'] });
+    vi.spyOn(browser.tabs, 'query').mockImplementation((async () => []) as never);
+    await onBrowserStart();
+    expect(chrome.browsingData.remove).not.toHaveBeenCalled();
+  });
+});
+
+describe('a locked site that loads anyway is replaced (L2)', () => {
+  beforeEach(forgetTrackedTabs);
+  const URL_ = 'https://www.example.test/feed';
+  const TAB = { id: 3, windowId: 1, index: 2, pinned: false, active: true, url: URL_ };
+
+  function stubTab(tab: { url?: string; pendingUrl?: string } | null) {
+    vi.spyOn(browser.tabs, 'get').mockImplementation((async () => {
+      if (!tab) throw new Error('No tab with id: 3');
+      return { ...TAB, ...tab };
+    }) as never);
+    const create = vi.spyOn(browser.tabs, 'create').mockImplementation((async () => ({ id: 99 })) as never);
+    const remove = vi.spyOn(browser.tabs, 'remove').mockImplementation((async () => {}) as never);
+    return { create, remove };
+  }
+
+  async function seedLocked() {
+    await seedPassword();
+    await saveSettings({ domains: ['example.test'] });
+  }
+
+  it('a new URL on a locked domain while locked: the tab is recreated on the lock page', async () => {
+    await seedLocked();
+    const { create, remove } = stubTab({ url: URL_ });
+    await onTabUpdated(3, { url: URL_ });
+    expect(create.mock.calls.map((c) => c[0])).toEqual([
+      { windowId: 1, index: 2, pinned: false, active: true, url: `${LOCK}#u=${URL_}` },
+    ]);
+    expect(remove.mock.calls.map((c) => c[0])).toEqual([3]);
+  });
+
+  it('a reload (status loading, committed URL on a locked domain) is replaced too', async () => {
+    await seedLocked();
+    const { remove } = stubTab({ url: URL_ });
+    await onTabUpdated(3, { status: 'loading' }, { url: URL_ });
+    expect(remove.mock.calls.map((c) => c[0])).toEqual([3]);
+  });
+
+  it('a pending navigation the redirect rule will catch is left alone', async () => {
+    await seedLocked();
+    const { create, remove } = stubTab({ url: 'https://other.test/', pendingUrl: URL_ });
+    await onTabUpdated(3, { status: 'loading' }, { url: 'https://other.test/' });
+    expect(create).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('leaves the tab alone while unlocked, before a password, or off the locked domains', async () => {
+    await saveSettings({ domains: ['example.test'] });
+    const { create, remove } = stubTab({ url: URL_ });
+    await onTabUpdated(3, { url: URL_ }); // no password yet
+    await seedPassword();
+    await onTabUpdated(3, { url: 'https://notexample.test/' });
+    await onTabUpdated(3, { url: `${LOCK}#u=${URL_}` });
+    await handleMessage({ type: 'unlock', password: PW }, {});
+    await onTabUpdated(3, { url: URL_ });
+    // Unlocking the settings alone does not open the sites, so that tab is replaced.
+    await handleMessage({ type: 'lockNow' }, {});
+    await handleMessage({ type: 'unlockSettings', password: PW }, {});
+    expect(create).not.toHaveBeenCalled();
+    await onTabUpdated(3, { url: URL_ });
+    expect(remove.mock.calls.map((c) => c[0])).toEqual([3]);
+  });
+
+  it('skips a tab that moved on or closed before its turn', async () => {
+    await seedLocked();
+    let { create } = stubTab({ url: `${LOCK}#u=${URL_}` });
+    await onTabUpdated(3, { url: URL_ });
+    expect(create).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+    chrome = installChrome();
+    ({ create } = stubTab(null));
+    await onTabUpdated(3, { url: URL_ });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('leaves a domain without site access on Chrome’s blocked page (no lock screen for it)', async () => {
+    await seedLocked();
+    const contains = vi.mocked(browser.permissions.contains);
+    contains.mockImplementation((async () => false) as never);
+    const { create, remove } = stubTab({ url: URL_ });
+    await onTabUpdated(3, { url: URL_ });
+    expect(contains).toHaveBeenCalledWith({ origins: ['*://example.test/*', '*://*.example.test/*'] });
+    expect(create).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+
+    // A failed access check shows the lock page (fail closed).
+    contains.mockImplementation((async () => {
+      throw new Error('permissions down');
+    }) as never);
+    await onTabUpdated(3, { url: URL_ });
+    expect(remove.mock.calls.map((c) => c[0])).toEqual([3]);
+  });
+
+  it('treats a failed unlock-rule read as locked', async () => {
+    await seedLocked();
+    const { remove } = stubTab({ url: URL_ });
+    chrome.dnr.getSessionRules.mockImplementation(async () => {
+      throw new Error('dnr down');
+    });
+    await onTabUpdated(3, { url: URL_ });
+    expect(remove.mock.calls.map((c) => c[0])).toEqual([3]);
+  });
+
+  it('the tabs.onUpdated listener passes the tab, so a reload is caught', async () => {
+    background.main();
+    await seedLocked();
+    const { remove } = stubTab({ url: URL_ });
+    await fakeBrowser.tabs.onUpdated.trigger(3, { status: 'loading' } as never, { ...TAB } as never);
+    await vi.waitFor(() => expect(remove).toHaveBeenCalledWith(3));
   });
 });

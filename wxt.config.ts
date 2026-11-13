@@ -11,7 +11,8 @@ export default defineConfig({
     short_name: '__MSG_extShortName__',
     default_locale: 'en',
     minimum_chrome_version: '120',
-    permissions: ['declarativeNetRequest', 'storage', 'idle', 'tabs'],
+    // browsingData: a relock removes the locked sites' service workers and caches (no install warning).
+    permissions: ['declarativeNetRequest', 'storage', 'idle', 'tabs', 'browsingData'],
     optional_host_permissions: ['*://*/*'],
     web_accessible_resources: [{ resources: ['lock.html'], matches: ['<all_urls>'] }],
     // Only the e2e build gets host permissions; noperm.test deliberately gets none.

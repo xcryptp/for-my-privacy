@@ -9,12 +9,36 @@ export const RULE_UNLOCK = 100;
 const lockPageBase = () => browser.runtime.getURL('/lock.html');
 
 /**
+ * Every declarativeNetRequest resource type Chrome 120 knows. The block and unlock rules cover
+ * all of them: a page shell served by the site's own service worker never reaches the network,
+ * so while locked its data requests must fail too, and while unlocked nothing may be blocked.
+ */
+export const ALL_RESOURCE_TYPES = [
+  'main_frame',
+  'sub_frame',
+  'stylesheet',
+  'script',
+  'image',
+  'font',
+  'object',
+  'xmlhttprequest',
+  'ping',
+  'csp_report',
+  'media',
+  'websocket',
+  'webtransport',
+  'webbundle',
+  'other',
+] as const satisfies readonly `${Browser.declarativeNetRequest.ResourceType}`[];
+
+/**
  * Dynamic rules for the locked domains. `requestDomains` matches each domain and all its
  * subdomains. The redirect (priority 2) sends top-level navigations to the lock page; it lists
  * only `redirectDomains`, the domains the extension has host access to. Chrome picks the highest
  * priority match, cannot apply a redirect without host access and then does not fall back to a
  * lower rule, so a domain without access must not be in the redirect rule. The block rule
- * (priority 1) covers every domain: it is the fallback for those domains and for iframes.
+ * (priority 1) covers every domain and every resource type: it is the fallback for those domains,
+ * for iframes and for anything a service-worker-served page of a locked site requests.
  * The redirect must outrank the block because block wins at equal priority.
  */
 export function buildBlockRules(domains: string[], redirectDomains: string[], lockPageBase: string): Rule[] {
@@ -31,7 +55,7 @@ export function buildBlockRules(domains: string[], redirectDomains: string[], lo
   rules.push({
     id: RULE_FALLBACK_BLOCK,
     priority: 1,
-    condition: { requestDomains: domains, resourceTypes: ['main_frame', 'sub_frame'] },
+    condition: { requestDomains: domains, resourceTypes: [...ALL_RESOURCE_TYPES] },
     action: { type: 'block' },
   } as Rule);
   return rules;
@@ -65,7 +89,7 @@ export async function setUnlocked(domains: string[]): Promise<void> {
             {
               id: RULE_UNLOCK,
               priority: 3,
-              condition: { requestDomains: domains, resourceTypes: ['main_frame', 'sub_frame'] },
+              condition: { requestDomains: domains, resourceTypes: [...ALL_RESOURCE_TYPES] },
               action: { type: 'allow' },
             },
           ] as Rule[]),

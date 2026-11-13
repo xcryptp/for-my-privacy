@@ -3,6 +3,7 @@ import { defineBackground } from 'wxt/utils/define-background';
 import {
   applySettings,
   handleMessage,
+  onBrowserStart,
   onIdleStateChanged,
   onInstalled,
   onPermissionsRemoved,
@@ -28,7 +29,7 @@ export default defineBackground(() => {
     onInstalled(details).catch(logErrors('onInstalled'));
   });
   browser.runtime.onStartup.addListener(() => {
-    onWorkerStart().catch(logErrors('onStartup'));
+    onBrowserStart().catch(logErrors('onStartup'));
   });
   browser.idle.onStateChanged.addListener((state) => {
     onIdleStateChanged(state).catch(logErrors('idle'));
@@ -36,8 +37,8 @@ export default defineBackground(() => {
   browser.windows.onRemoved.addListener(() => {
     onWindowRemoved().catch(logErrors('windows.onRemoved'));
   });
-  browser.tabs.onUpdated.addListener((tabId, changeInfo) => {
-    onTabUpdated(tabId, changeInfo).catch(logErrors('tabs.onUpdated'));
+  browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    onTabUpdated(tabId, changeInfo, tab).catch(logErrors('tabs.onUpdated'));
   });
   browser.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
     onTabReplaced(addedTabId, removedTabId).catch(logErrors('tabs.onReplaced'));

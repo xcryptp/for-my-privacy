@@ -16,7 +16,7 @@ const PW = 'correct horse';
 const call = (sw: Worker, req: unknown) =>
   sw.evaluate((r) => (globalThis as unknown as { __fmp: Api }).__fmp.handleMessage(r, {}), req);
 
-/** Sets a password and locks `domains`; the worker is then unlocked (setup unlocks). */
+/** Sets a password, locks `domains`, then unlocks the sites the way the lock page does. */
 async function setUp(sw: Worker, domains: string[]) {
   await sw.evaluate(
     async ({ domains, pw }) => {
@@ -24,6 +24,9 @@ async function setUp(sw: Worker, domains: string[]) {
       await api.handleMessage({ type: 'setup', password: pw }, {});
       await api.saveSettings({ domains });
       await api.applySettings(await api.getSettings());
+      // Setup opens only the settings; the sites need the lock page's unlock.
+      const res = await api.handleMessage({ type: 'unlock', password: pw }, {});
+      if (!res.ok) throw new Error('unlock failed');
     },
     { domains, pw: PW },
   );
