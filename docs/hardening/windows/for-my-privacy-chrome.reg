@@ -1,0 +1,11 @@
+Windows Registry Editor Version 5.00
+
+; For My Privacy: Chrome policies. Needs an administrator. Replace <EXTENSION_ID> with the 32-letter ID
+; Chrome Web Store shows for the extension, then double-click this file.
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome]
+; 2 = DevTools disabled everywhere (1 = allowed; 0 = allowed except for force-installed extensions)
+"DeveloperToolsAvailability"=dword:00000002
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist]
+"1"="<EXTENSION_ID>;https://clients2.google.com/service/update2/crx"

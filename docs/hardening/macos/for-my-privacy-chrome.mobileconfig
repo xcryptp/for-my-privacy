@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>PayloadType</key>
+  <string>Configuration</string>
+  <key>PayloadVersion</key>
+  <integer>1</integer>
+  <key>PayloadIdentifier</key>
+  <string>com.github.xcryptp.for-my-privacy.chrome-policy</string>
+  <key>PayloadUUID</key>
+  <string>E18AA170-8F19-4577-94AA-4EBA98ECAABD</string>
+  <key>PayloadDisplayName</key>
+  <string>For My Privacy: Chrome policies</string>
+  <key>PayloadDescription</key>
+  <string>Turns off Chrome DevTools and force-installs the For My Privacy extension so it cannot be switched off or removed from the toolbar. Replace EXTENSION_ID before installing.</string>
+  <key>PayloadOrganization</key>
+  <string>For My Privacy</string>
+  <key>PayloadScope</key>
+  <string>System</string>
+  <key>PayloadRemovalDisallowed</key>
+  <false/>
+  <key>PayloadContent</key>
+  <array>
+    <dict>
+      <key>PayloadType</key>
+      <string>com.google.Chrome</string>
+      <key>PayloadVersion</key>
+      <integer>1</integer>
+      <key>PayloadIdentifier</key>
+      <string>com.github.xcryptp.for-my-privacy.chrome-policy.chrome</string>
+      <key>PayloadUUID</key>
+      <string>8B42FDC1-E3D5-436D-B030-4A235A43238A</string>
+      <key>PayloadDisplayName</key>
+      <string>Google Chrome policies</string>
+      <!-- 2 = DevTools disabled everywhere (1 = allowed; 0 = allowed except for force-installed extensions). -->
+      <key>DeveloperToolsAvailability</key>
+      <integer>2</integer>
+      <!-- Replace EXTENSION_ID with the 32-letter ID Chrome Web Store shows for the extension. -->
+      <key>ExtensionInstallForcelist</key>
+      <array>
+        <string>&lt;EXTENSION_ID&gt;;https://clients2.google.com/service/update2/crx</string>
+      </array>
+    </dict>
+  </array>
+</dict>
+</plist>
