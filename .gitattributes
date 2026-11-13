@@ -1,0 +1,2 @@
+# Keep the Windows registry file's CRLF line endings byte for byte.
+*.reg -text

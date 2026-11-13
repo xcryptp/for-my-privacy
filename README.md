@@ -44,7 +44,7 @@ flowchart LR
 <details>
 <summary>The rules behind the diagram</summary>
 
-- Locked sites are blocked with Chrome's own `declarativeNetRequest` rules: a redirect rule sends the page request to the extension's lock page, under a lower-priority block rule for the same domains. The block rule keeps working even if site access is withdrawn from the toolbar menu, so the site shows a blocked page, never its content.
+- Locked sites are blocked with Chrome's own `declarativeNetRequest` rules. A redirect rule (the higher priority) sends the page request to the extension's lock page. A block rule for the same domains has a lower priority and is the backup: it keeps working even if site access is withdrawn from the toolbar menu, so the site shows a blocked page, never its content.
 - Unlocking adds one higher-priority allow rule that lives only for the browser session. It is the only "unlocked" state there is. Restarting Chrome clears it, so Chrome starts locked.
 - Idle detection uses Chrome's `idle` API and counts keyboard and mouse input on the whole computer, not only in Chrome.
 - Re-locking removes the allow rule and replaces each open tab of a locked site with a new lock-page tab in the same window and position. A new tab is used because changing the address of an old tab would let Back bring its page back from Chrome's cache.
@@ -66,7 +66,7 @@ flowchart LR
 6. Click **Load unpacked** and choose the folder that contains `manifest.json`.
 7. The settings page opens. Create your password.
 
-At install Chrome says the extension can **"Block content on any page"**. That is how Chrome words the `declarativeNetRequest` permission, which For My Privacy needs to block locked sites even when site access is withdrawn. It only acts on the sites you add.
+Wherever Chrome shows an extension's permissions (the store page, the extension's details), it lists the `declarativeNetRequest` permission as "**Block content on any page**". For My Privacy needs this permission to block locked sites even when site access is withdrawn. It only acts on the sites you add.
 
 ## Use
 
@@ -105,12 +105,14 @@ Chrome has official management policies. Two of them close the biggest gaps abov
 | `DeveloperToolsAvailability` | `2` | Turns Chrome DevTools off everywhere |
 | `ExtensionInstallForcelist` | `<EXTENSION_ID>;https://clients2.google.com/service/update2/crx` | Installs the extension from the Chrome Web Store and keeps it: it cannot be switched off or removed from the toolbar menu |
 
+> **Warning: not verified yet.** `DeveloperToolsAvailability = 2` may also switch off Developer mode on `chrome://extensions` (Chrome's `ExtensionDeveloperModeSettings` policy may follow it when it is not set; this is unverified). If it does, an unpacked install (see [Install](#install)) could no longer be reloaded or updated, and Chrome might even disable it. **These policies are mainly meant for a store install.** If you installed the unpacked zip, remove the policy before you update it. The unpacked install together with the DevTools-only policy has not been tested; it is item 15 in [`docs/manual-checks.md`](docs/manual-checks.md).
+
 Ready-made files:
 
 - macOS: [`docs/hardening/macos/for-my-privacy-chrome.mobileconfig`](docs/hardening/macos/for-my-privacy-chrome.mobileconfig) (a configuration profile, payload type `com.google.Chrome`)
 - Windows: [`docs/hardening/windows/for-my-privacy-chrome.reg`](docs/hardening/windows/for-my-privacy-chrome.reg) (registry keys under `HKLM\SOFTWARE\Policies\Google\Chrome` and `...\ExtensionInstallForcelist`)
 
-The force-install policy needs the extension's Chrome Web Store ID, which exists once the store listing is live. Replace `<EXTENSION_ID>` in the file (brackets included) with the 32-letter ID. Until then, delete the force-install part and use only the DevTools policy.
+The force-install policy needs the extension's Chrome Web Store ID, which exists once the store listing is live. Replace `<EXTENSION_ID>` in the file (brackets included) with the 32-letter ID. The store copy and an unpacked copy are two separate extensions with separate storage and passwords, so remove the unpacked copy before you force-install the store version. Until then, delete the force-install part. Read the warning below before you use the DevTools policy on its own.
 
 **macOS**
 
@@ -122,7 +124,7 @@ The force-install policy needs the extension's Chrome Web Store ID, which exists
 
 **Windows**
 
-1. Right-click the `.reg` file, choose **Edit** (or open it in Notepad) and replace `<EXTENSION_ID>` (brackets included) with the ID.
+1. Right-click the `.reg` file, choose **Edit** (on Windows 11 it is under **Show more options**) or open it in Notepad, and replace `<EXTENSION_ID>` (brackets included) with the ID.
 2. Double-click the file and accept the administrator prompt.
 3. Restart Chrome and open `chrome://policy`; click **Reload policies**. Both policies should be listed.
 4. To undo: delete the `DeveloperToolsAvailability` value and the `ExtensionInstallForcelist` key from `HKLM\SOFTWARE\Policies\Google\Chrome` in Registry Editor.
@@ -154,7 +156,7 @@ npm run zip             # store zip; npm run zip:noguard for the noguard zip
 
 The first browser test run needs Chromium: `npx playwright install chromium`.
 
-To try a build, load `.output/chrome-mv3` with **Load unpacked** as in [Install](#install). Screenshots in this README are made by `node scripts/screenshots.ts` after `npm run build`. Hand checks that cannot be automated are in [`docs/manual-checks.md`](docs/manual-checks.md). Licenses of the few third-party pieces inside the build: [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).
+To try a build, load `.output/chrome-mv3` with **Load unpacked** as in [Install](#install). Screenshots in this README are made by `node scripts/screenshots.ts` after `npm run build` (it runs a `.ts` file directly, which needs Node 22.18+ or 23.6+). Hand checks that cannot be automated are in [`docs/manual-checks.md`](docs/manual-checks.md). Licenses of the few third-party pieces inside the build: [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).
 
 </details>
 

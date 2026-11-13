@@ -9,7 +9,7 @@ Setup for every check: create a password, add a site, unlock it, open the site i
 | # | Check | macOS | Windows |
 | --- | --- | --- | --- |
 | 1 | Lock the screen (macOS: Control-Command-Q; Windows: Windows-L) with the site unlocked, then sign back in. The open site tab now shows the lock screen and Back does not show the old page. | [ ] | [ ] |
-| 2 | In Settings, switch off "lock when the screen locks". Lock the screen and sign back in. The site is still unlocked. Switch it back on afterwards. | [ ] | [ ] |
+| 2 | In Settings, switch off "lock when the screen locks". Lock the screen and sign back in within the auto-lock time (time spent with the screen locked counts toward idle). The site is still unlocked. Switch it back on afterwards. | [ ] | [ ] |
 | 3 | Set auto-lock to 1 minute. Leave the computer without touching keyboard or mouse for a little over 1 minute. The site tab shows the lock screen. | [ ] | [ ] |
 | 4 | With auto-lock at 1 minute, keep working in another app (typing, moving the mouse) for 3 minutes. The site stays unlocked: the timer counts input on the whole computer, not only in Chrome. | [ ] | [ ] |
 
@@ -38,7 +38,8 @@ Use the store ID of the published extension in place of `<EXTENSION_ID>`. Do thi
 | 11 | Install the policy file (macOS: `docs/hardening/macos/for-my-privacy-chrome.mobileconfig`; Windows: `docs/hardening/windows/for-my-privacy-chrome.reg`) and restart Chrome. `chrome://policy` lists `DeveloperToolsAvailability` = 2 and `ExtensionInstallForcelist` with no errors. | [ ] | [ ] |
 | 12 | F12 and Ctrl/Command-Option-I do nothing, and "Inspect" is missing from the page menu. | [ ] | [ ] |
 | 13 | The extension shows "Installed by your administrator" on `chrome://extensions`, and its Remove button and the toolbar menu's "Remove from Chrome" are greyed out. | [ ] | [ ] |
-| 14 | Remove the policy (macOS: delete the profile in System Settings, Privacy and Security, Profiles; Windows: delete the two registry keys), restart Chrome and confirm the policies are gone from `chrome://policy`. | [ ] | [ ] |
+| 14 | Remove the policy (macOS: delete the profile in System Settings, Privacy and Security, Profiles; Windows: delete the `DeveloperToolsAvailability` value and the `ExtensionInstallForcelist` key), restart Chrome and confirm the policies are gone from `chrome://policy`. | [ ] | [ ] |
+| 15 | With the unpacked build installed (no store ID, so no force-install), apply only the DevTools policy (`DeveloperToolsAvailability` = 2) and restart Chrome. Confirm the extension stays enabled and the lock still works, and note whether Developer mode on `chrome://extensions` can still be used (reload, Load unpacked). The README warns that this is unverified. Remove the policy again afterwards. | [ ] | [ ] |
 
 ## Record
 

@@ -66,7 +66,7 @@ flowchart LR
 6. **パッケージ化されていない拡張機能を読み込む**を押し、`manifest.json` が入っているフォルダを選びます。
 7. 設定画面が開くので、パスワードを作ります。
 
-インストールのとき、Chrome はこの拡張機能が**「あらゆるページのコンテンツをブロック」**できると表示します。これは Chrome が `declarativeNetRequest` 権限をこう表現しているもので、サイトへのアクセス権が外されてもロック対象サイトをブロックし続けるために必要です。動作するのは、あなたが追加したサイトだけです。
+Chrome は、拡張機能の権限を表示する場所（ストアのページ、拡張機能の詳細）で、`declarativeNetRequest` 権限を「**あらゆるページのコンテンツをブロック**」と表示します。サイトへのアクセス権が外されてもロック対象サイトをブロックし続けるために、この権限が必要です。動作するのは、あなたが追加したサイトだけです。
 
 ## 使い方
 
@@ -105,12 +105,14 @@ Chrome には公式の管理ポリシーがあります。そのうち2つが、
 | `DeveloperToolsAvailability` | `2` | Chrome のデベロッパーツールをどこでもオフにします |
 | `ExtensionInstallForcelist` | `<EXTENSION_ID>;https://clients2.google.com/service/update2/crx` | Chrome ウェブストアから拡張機能をインストールして維持します。ツールバーのメニューからオフにしたり削除したりできなくなります |
 
+> **警告：まだ確認できていません。** `DeveloperToolsAvailability = 2` は、`chrome://extensions` のデベロッパーモードまでオフにしてしまうかもしれません（Chrome の `ExtensionDeveloperModeSettings` ポリシーが未設定のとき、この値に従う可能性がありますが、確認できていません）。そうなると、パッケージ化されていない拡張機能（[インストール](#インストール)を参照）は再読み込みも更新もできなくなり、Chrome が無効にしてしまうかもしれません。**これらのポリシーは、主にストアからインストールした場合のためのものです。** zip を手動で入れた場合は、更新する前にポリシーを削除してください。パッケージ化されていないインストールと、デベロッパーツールだけをオフにするポリシーの組み合わせは、まだ試していません。[`docs/manual-checks.md`](docs/manual-checks.md) の15番の項目です。
+
 すぐ使えるファイルです。
 
 - macOS：[`docs/hardening/macos/for-my-privacy-chrome.mobileconfig`](docs/hardening/macos/for-my-privacy-chrome.mobileconfig)（構成プロファイル、ペイロードタイプ `com.google.Chrome`）
 - Windows：[`docs/hardening/windows/for-my-privacy-chrome.reg`](docs/hardening/windows/for-my-privacy-chrome.reg)（`HKLM\SOFTWARE\Policies\Google\Chrome` と `...\ExtensionInstallForcelist` の下のレジストリキー）
 
-強制インストールのポリシーには、拡張機能の Chrome ウェブストアの ID が必要です。ストアに公開されてから手に入ります。ファイルの `<EXTENSION_ID>`（山かっこを含む）を32文字の ID に置き換えてください。それまでは、強制インストールの部分を削除し、デベロッパーツールのポリシーだけを使ってください。
+強制インストールのポリシーには、拡張機能の Chrome ウェブストアの ID が必要です。ストアに公開されてから手に入ります。ファイルの `<EXTENSION_ID>`（山かっこを含む）を32文字の ID に置き換えてください。ストア版と、パッケージ化されていない状態で入れた版は、保存場所もパスワードも別の、別々の拡張機能です。ストア版を強制インストールする前に、パッケージ化されていない版を削除してください。それまでは、強制インストールの部分を削除してください。デベロッパーツールのポリシーだけを使う前に、下の警告を読んでください。
 
 **macOS**
 
@@ -122,7 +124,7 @@ Chrome には公式の管理ポリシーがあります。そのうち2つが、
 
 **Windows**
 
-1. `.reg` ファイルを右クリックして**編集**を選び（またはメモ帳で開き）、`<EXTENSION_ID>`（山かっこを含む）を ID に置き換えます。
+1. `.reg` ファイルを右クリックして**編集**を選ぶか（Windows 11 では**その他のオプションを表示**の中にあります）、メモ帳で開き、`<EXTENSION_ID>`（山かっこを含む）を ID に置き換えます。
 2. ファイルをダブルクリックし、管理者の確認に同意します。
 3. Chrome を再起動して `chrome://policy` を開き、**ポリシーを再読み込み**を押します。2つのポリシーが表示されるはずです。
 4. 元に戻すには、レジストリエディタで `HKLM\SOFTWARE\Policies\Google\Chrome` の `DeveloperToolsAvailability` の値と `ExtensionInstallForcelist` のキーを削除します。
@@ -154,7 +156,7 @@ npm run zip             # ストア用 zip。noguard の zip は npm run zip:nog
 
 ブラウザテストを初めて実行するときは Chromium が必要です：`npx playwright install chromium`。
 
-ビルドを試すには、[インストール](#インストール)と同じように `.output/chrome-mv3` を**パッケージ化されていない拡張機能を読み込む**で読み込みます。この README のスクリーンショットは、`npm run build` の後に `node scripts/screenshots.ts` で作ります。自動化できない手作業の確認一覧は [`docs/manual-checks.md`](docs/manual-checks.md) にあります。ビルドに含まれる外部コードの断片のライセンスは [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES) にあります。
+ビルドを試すには、[インストール](#インストール)と同じように `.output/chrome-mv3` を**パッケージ化されていない拡張機能を読み込む**で読み込みます。この README のスクリーンショットは、`npm run build` の後に `node scripts/screenshots.ts` で作ります（`.ts` ファイルを直接実行するため、Node 22.18 以上または 23.6 以上が必要です）。自動化できない手作業の確認一覧は [`docs/manual-checks.md`](docs/manual-checks.md) にあります。ビルドに含まれる外部コードの断片のライセンスは [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES) にあります。
 
 </details>
 

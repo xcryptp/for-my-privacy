@@ -1,6 +1,6 @@
 // Takes the README screenshots from the built extension. Run it after `npm run build`:
 //
-//   node scripts/screenshots.ts
+//   node scripts/screenshots.ts   (runs a .ts file directly: Node 22.18+ or 23.6+)
 //
 // It builds nothing itself. It loads `.output/chrome-mv3` the way tests/e2e/fixtures.ts does,
 // creates a demo password and the demo site `instagram.com`, and saves 1280x800 light-mode PNGs

@@ -17,7 +17,7 @@
 
 ## 기능
 
-- **사이트 전체를 잠급니다.** `instagram.com`을 추가하면 하위 도메인도 모두 잠깁니다(`www.instagram.com`, `help.instagram.com`). `notinstagram.com`처럼 이름만 비슷한 사이트는 건드리지 않습니다.
+- **사이트 전체를 잠급니다.** `instagram.com`을 추가하면 하위 주소도 모두 잠깁니다(`www.instagram.com`, `help.instagram.com`). `notinstagram.com`처럼 이름만 비슷한 사이트는 건드리지 않습니다.
 - **먼저 잠금 화면.** 잠긴 사이트에서는 페이지 대신 잠금 화면이 뜹니다. 링크, 북마크, 주소창, 직접 입력한 주소 모두 마찬가지입니다.
 - **비밀번호 하나.** 잠긴 모든 사이트와 설정 화면이 같은 비밀번호로 열립니다. 비밀번호는 salt를 쓴 PBKDF2-SHA256 해시로만 저장되며 되살릴 수 없습니다.
 - **알아서 다시 잠깁니다.** 키보드·마우스 입력이 몇 분 동안 없을 때, 화면이 잠길 때, 마지막 크롬 창을 닫을 때, 크롬을 다시 켤 때입니다.
@@ -66,7 +66,7 @@ flowchart LR
 6. **압축해제된 확장 프로그램을 로드합니다**를 눌러 `manifest.json`이 들어 있는 폴더를 고릅니다.
 7. 설정 화면이 열리면 비밀번호를 만듭니다.
 
-설치할 때 크롬은 이 확장 프로그램이 **"모든 페이지의 콘텐츠 차단"**을 할 수 있다고 알려 줍니다. `declarativeNetRequest` 권한을 크롬이 이렇게 표현하는 것으로, 사이트 접근 권한이 빠져도 잠긴 사이트를 막으려면 이 권한이 필요합니다. 추가한 사이트에만 동작합니다.
+크롬은 확장 프로그램의 권한을 보여 주는 곳(스토어 페이지, 확장 프로그램 세부정보)에서 `declarativeNetRequest` 권한을 "**모든 페이지의 콘텐츠 차단**"이라고 표시합니다. 사이트 접근 권한이 빠져도 잠긴 사이트를 막으려면 이 권한이 필요합니다. 추가한 사이트에만 동작합니다.
 
 ## 사용법
 
@@ -105,24 +105,26 @@ For My Privacy는 로그인된 내 크롬을 쓰는 사람이 잠가 둔 사이�
 | `DeveloperToolsAvailability` | `2` | 크롬 개발자 도구를 어디서든 끕니다 |
 | `ExtensionInstallForcelist` | `<EXTENSION_ID>;https://clients2.google.com/service/update2/crx` | 크롬 웹 스토어에서 확장 프로그램을 설치하고 유지합니다. 툴바 메뉴에서 끄거나 지울 수 없게 됩니다 |
 
+> **경고: 아직 확인하지 못했습니다.** `DeveloperToolsAvailability = 2`가 `chrome://extensions`의 개발자 모드까지 함께 끌 수 있습니다(크롬의 `ExtensionDeveloperModeSettings` 정책이 설정되지 않았을 때 이 값을 따를 수 있다고 보지만, 확인하지 못했습니다). 그렇다면 압축해제로 올린 확장 프로그램([설치](#설치) 참고)은 다시 불러오거나 업데이트할 수 없게 되고, 크롬이 아예 꺼 버릴 수도 있습니다. **이 정책은 주로 스토어로 설치한 경우를 위한 것입니다.** 압축해제로 올렸다면 업데이트하기 전에 정책을 먼저 지우세요. 압축해제 설치와 개발자 도구만 끄는 정책을 함께 쓰는 경우는 아직 시험하지 않았으며, [`docs/manual-checks.md`](docs/manual-checks.md)의 15번 항목입니다.
+
 바로 쓸 수 있는 파일입니다.
 
 - macOS: [`docs/hardening/macos/for-my-privacy-chrome.mobileconfig`](docs/hardening/macos/for-my-privacy-chrome.mobileconfig) (구성 프로필, 페이로드 유형 `com.google.Chrome`)
 - Windows: [`docs/hardening/windows/for-my-privacy-chrome.reg`](docs/hardening/windows/for-my-privacy-chrome.reg) (`HKLM\SOFTWARE\Policies\Google\Chrome`과 `...\ExtensionInstallForcelist` 아래의 레지스트리 키)
 
-강제 설치 정책에는 확장 프로그램의 크롬 웹 스토어 ID가 필요하며, 스토어에 등록된 뒤에야 생깁니다. 파일의 `<EXTENSION_ID>`(꺾쇠 괄호 포함)를 32자 ID로 바꾸세요. 그 전에는 강제 설치 부분을 지우고 개발자 도구 정책만 쓰세요.
+강제 설치 정책에는 확장 프로그램의 크롬 웹 스토어 ID가 필요하며, 스토어에 등록된 뒤에야 생깁니다. 파일의 `<EXTENSION_ID>`(꺾쇠 괄호 포함)를 32자 ID로 바꾸세요. 스토어 버전과 압축해제로 올린 버전은 저장 공간과 비밀번호가 따로인 서로 다른 확장 프로그램이므로, 스토어 버전을 강제 설치하기 전에 압축해제로 올린 쪽을 먼저 삭제하세요. 그 전에는 강제 설치 부분을 지우세요. 개발자 도구 정책만 따로 쓰기 전에 아래 경고를 읽어 보세요.
 
 **macOS**
 
 1. `.mobileconfig` 파일을 텍스트 편집기로 열어 `&lt;EXTENSION_ID&gt;`를 32자 ID로 바꿉니다(파일이 XML이라 꺾쇠 괄호가 `&lt;`와 `&gt;`로 적혀 있습니다).
 2. 파일을 더블클릭합니다. 프로필이 내려받아졌다는 안내가 뜹니다.
-3. 시스템 설정에서 **프로파일**을 찾아(개인정보 보호 및 보안 아래, 최신 macOS에서는 일반의 기기 관리) 프로필을 고르고 **설치**를 누릅니다. 관리자 비밀번호를 입력합니다.
+3. 시스템 설정에서 **프로필**을 찾아(개인정보 보호 및 보안 아래, 최신 macOS에서는 일반의 기기 관리) 프로필을 고르고 **설치**를 누릅니다. 관리자 비밀번호를 입력합니다.
 4. 크롬을 다시 켜고 `chrome://policy`를 열어 **정책 다시 로드**를 누릅니다. 두 정책이 모두 보여야 합니다.
-5. 되돌리려면 같은 프로파일 화면에서 프로필을 삭제합니다.
+5. 되돌리려면 같은 프로필 화면에서 프로필을 삭제합니다.
 
 **Windows**
 
-1. `.reg` 파일을 우클릭해 **편집**을 고르거나(또는 메모장으로 열어) `<EXTENSION_ID>`(꺾쇠 괄호 포함)를 ID로 바꿉니다.
+1. `.reg` 파일을 우클릭해 **편집**을 고르거나(Windows 11에서는 **추가 옵션 표시** 안에 있습니다) 메모장으로 열어 `<EXTENSION_ID>`(꺾쇠 괄호 포함)를 ID로 바꿉니다.
 2. 파일을 더블클릭하고 관리자 권한 확인에 동의합니다.
 3. 크롬을 다시 켜고 `chrome://policy`를 열어 **정책 다시 로드**를 누릅니다. 두 정책이 모두 보여야 합니다.
 4. 되돌리려면 레지스트리 편집기에서 `HKLM\SOFTWARE\Policies\Google\Chrome`의 `DeveloperToolsAvailability` 값과 `ExtensionInstallForcelist` 키를 지웁니다.
@@ -154,7 +156,7 @@ npm run zip             # 스토어용 zip. noguard zip은 npm run zip:noguard
 
 브라우저 테스트를 처음 돌리려면 Chromium이 필요합니다: `npx playwright install chromium`.
 
-빌드를 시험하려면 [설치](#설치)처럼 `.output/chrome-mv3`를 **압축해제된 확장 프로그램을 로드합니다**로 불러옵니다. 이 README의 스크린샷은 `npm run build` 뒤에 `node scripts/screenshots.ts`로 만듭니다. 자동화할 수 없는 직접 확인 목록은 [`docs/manual-checks.md`](docs/manual-checks.md)에 있습니다. 빌드에 들어간 외부 코드 조각의 라이선스는 [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES)에 있습니다.
+빌드를 시험하려면 [설치](#설치)처럼 `.output/chrome-mv3`를 **압축해제된 확장 프로그램을 로드합니다**로 불러옵니다. 이 README의 스크린샷은 `npm run build` 뒤에 `node scripts/screenshots.ts`로 만듭니다(`.ts` 파일을 바로 실행하므로 Node 22.18 이상 또는 23.6 이상이 필요합니다). 자동화할 수 없는 직접 확인 목록은 [`docs/manual-checks.md`](docs/manual-checks.md)에 있습니다. 빌드에 들어간 외부 코드 조각의 라이선스는 [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES)에 있습니다.
 
 </details>
 
