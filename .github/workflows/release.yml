@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Check tag matches package.json version
+        run: node scripts/check-version.mjs
+      - name: Build zips
+        run: |
+          npm run zip
+          npm run zip:noguard
+      - name: Extract release notes from CHANGELOG.md
+        run: node scripts/changelog-section.mjs "$(jq -r .version package.json)"
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="$(jq -r .version package.json)"
+          gh release create "$GITHUB_REF_NAME" \
+            ".output/for-my-privacy-${VERSION}-chrome.zip" \
+            ".output/for-my-privacy-${VERSION}-chrome-noguard.zip" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file notes.md

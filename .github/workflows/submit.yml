@@ -1,0 +1,41 @@
+name: Submit to Chrome Web Store
+
+# Manual only. The first store upload is done by hand in the dashboard; this
+# workflow updates an existing listing with the store build of the selected ref.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Check authentication only; do not upload or submit
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Build store zip
+        run: npm run zip
+      - name: Submit to Chrome Web Store (API v2)
+        env:
+          CHROME_API_VERSION: v2
+          CHROME_PUBLISHER_ID: ${{ secrets.CHROME_PUBLISHER_ID }}
+          CHROME_EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+          CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL: ${{ secrets.CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL }}
+          CHROME_SERVICE_ACCOUNT_PRIVATE_KEY: ${{ secrets.CHROME_SERVICE_ACCOUNT_PRIVATE_KEY }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          VERSION="$(jq -r .version package.json)"
+          ARGS=(--chrome-zip ".output/for-my-privacy-${VERSION}-chrome.zip")
+          if [ "$DRY_RUN" = "true" ]; then ARGS+=(--dry-run); fi
+          npx wxt submit "${ARGS[@]}"
