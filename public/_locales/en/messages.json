@@ -57,10 +57,10 @@
     "message": "Locked sites"
   },
   "domainsHint": {
-    "message": "Each site also locks all of its subdomains."
+    "message": "Paste any address. The site and all of its subdomains are locked, such as *.example.com."
   },
   "addDomainPlaceholder": {
-    "message": "example.com"
+    "message": "example.com or *.example.com"
   },
   "addButton": {
     "message": "Add"
@@ -117,9 +117,90 @@
     "message": "Site access was removed"
   },
   "permissionLostBody": {
-    "message": "Locked sites stay blocked, but the lock screen cannot open for them. Grant access again."
+    "message": "Locked sites stay locked, but without site access Chrome may briefly show its blocked page before the lock screen. Grant access again for a smoother lock."
   },
   "grantButton": {
     "message": "Grant access"
+  },
+  "menuLabel": {
+    "message": "Settings sections"
+  },
+  "menuSites": {
+    "message": "Sites"
+  },
+  "menuAutolock": {
+    "message": "Auto-lock"
+  },
+  "menuSecurity": {
+    "message": "Security"
+  },
+  "menuAbout": {
+    "message": "About"
+  },
+  "guardTitle": {
+    "message": "Extensions page"
+  },
+  "aboutVersion": {
+    "message": "Version $1"
+  },
+  "aboutLimits": {
+    "message": "What it protects and what it does not"
+  },
+  "aboutPrivacy": {
+    "message": "Privacy policy"
+  },
+  "aboutRepo": {
+    "message": "Source code on GitHub"
+  },
+  "willLock": {
+    "message": "Will lock $1 and all its subdomains."
+  },
+  "onboardingProgress": {
+    "message": "Step $1 of $2"
+  },
+  "onboardingWelcomeTitle": {
+    "message": "Welcome"
+  },
+  "onboardingWelcomeLine1": {
+    "message": "Locks the sites you choose behind a password."
+  },
+  "onboardingWelcomeLine2": {
+    "message": "Locks again when you step away from the computer."
+  },
+  "onboardingWelcomeLine3": {
+    "message": "Some things it cannot stop."
+  },
+  "onboardingLearnMore": {
+    "message": "Learn more"
+  },
+  "onboardingStart": {
+    "message": "Get started"
+  },
+  "backButton": {
+    "message": "Back"
+  },
+  "nextButton": {
+    "message": "Next"
+  },
+  "skipButton": {
+    "message": "Skip"
+  },
+  "finishButton": {
+    "message": "Finish"
+  },
+  "onboardingPasswordDone": {
+    "message": "Your password is set."
+  },
+  "onboardingSitesTitle": {
+    "message": "Choose sites to lock"
+  },
+  "onboardingSitesHint": {
+    "message": "Pick the sites you want to lock now. Chrome asks once to allow access to them. You can change the list later."
+  },
+  "onboardingCustomLabel": {
+    "message": "Another site"
+  },
+  "onboardingDoneTip": {
+    "message": "All set. Your chosen sites are locked now. Open one in a new tab to see the lock page."
   }
 }

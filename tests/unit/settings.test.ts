@@ -18,6 +18,11 @@ describe('settings', () => {
     expect((await getSettings()).domains).toEqual(['instagram.com']);
   });
 
+  it('collapses subdomain entries into their registrable domain', async () => {
+    const saved = await saveSettings({ domains: ['m.instagram.com', 'instagram.com', 'a.b.example.test'] });
+    expect(saved.domains).toEqual(['instagram.com', 'example.test']);
+  });
+
   it('clamps and rounds idleMinutes to an integer from 1 to 60', async () => {
     expect((await saveSettings({ idleMinutes: 0 })).idleMinutes).toBe(1);
     expect((await saveSettings({ idleMinutes: 99 })).idleMinutes).toBe(60);

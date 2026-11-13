@@ -16,6 +16,11 @@ body {
   margin: 0 auto;
 }
 
+/* The settings view has room for a menu beside its content. */
+.page.wide {
+  max-width: 56rem;
+}
+
 .head {
   display: flex;
   align-items: center;
@@ -38,6 +43,198 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+}
+
+.stack-sm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* ---- settings menu: a tab bar on a narrow screen, a sidebar from 720 px ---- */
+
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.panels {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.menu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--border);
+}
+
+.menu a {
+  display: flex;
+  align-items: center;
+  min-height: var(--tap);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 3px solid transparent;
+  margin-bottom: -1px;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.menu a:hover {
+  color: var(--text);
+}
+
+.menu a[aria-current='page'] {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+
+.menu a:focus-visible {
+  outline-offset: -3px;
+}
+
+@media (min-width: 45rem) {
+  .settings {
+    display: grid;
+    grid-template-columns: 12rem minmax(0, 1fr);
+    align-items: start;
+    gap: var(--space-5);
+  }
+
+  .menu {
+    position: sticky;
+    top: var(--space-4);
+    flex-direction: column;
+    flex-wrap: nowrap;
+    border-bottom: 0;
+  }
+
+  .menu a {
+    border-bottom: 0;
+    border-radius: var(--radius-sm);
+    margin-bottom: 0;
+    padding-inline: var(--space-3);
+  }
+
+  .menu a[aria-current='page'] {
+    background: var(--surface);
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+}
+
+/* The heading that receives focus on a step or section change needs no ring of its own. */
+h2[tabindex='-1']:focus {
+  outline: none;
+}
+
+/* ---- onboarding ---- */
+
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.progress-text {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.progress-bar {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-1);
+}
+
+.progress-bar i {
+  height: 0.25rem;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.progress-bar i.done {
+  background: var(--accent);
+}
+
+.step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.points {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding-inline-start: var(--space-5);
+}
+
+.points li::marker {
+  color: var(--accent);
+}
+
+.links {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding-inline-start: var(--space-5);
+}
+
+/* A site chip on the "Choose sites" step: outlined until chosen, then filled. */
+.chips button.choice {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.chips button.choice[aria-pressed='true'],
+.chips button.choice[aria-pressed='true']:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.chips button.choice[aria-pressed='true']::before {
+  /* The empty alternative text keeps the check mark out of the button's accessible name. */
+  content: '\2713' / '';
+}
+
+/* The live "Will lock" line under a site field. */
+.preview {
+  margin-top: calc(var(--space-1) * -1);
+  min-height: 1.5rem;
+  color: var(--text-muted);
+  font-size: 0.9375rem;
+  overflow-wrap: anywhere;
+}
+
+.preview.invalid {
+  color: var(--danger);
+}
+
+.preview:empty {
+  display: none;
+}
+
+.tip {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--success);
+  border-radius: var(--radius-sm);
+  background: var(--success-bg);
+  color: var(--success);
+  font-weight: 600;
+}
+
+.tip:empty {
+  display: none;
 }
 
 .card,
@@ -99,9 +296,28 @@ button.secondary:hover:not(:disabled) {
   align-self: flex-start;
 }
 
-#view-setup .form button,
 #view-locked .form button {
   align-self: stretch;
+}
+
+/* The row of step buttons: Back (outlined) beside the one filled main action. */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.actions button,
+.form .actions button {
+  flex: 1 1 8rem;
+  margin-top: 0;
+  align-self: auto;
+}
+
+/* Back sits first but is the lesser action: it takes less room than the main button. */
+.actions button.secondary {
+  flex: 0 1 auto;
 }
 
 .spaced {
@@ -137,6 +353,8 @@ button.secondary:hover:not(:disabled) {
 }
 
 #setup-error,
+#ob-site-error,
+#ob-finish-error,
 #unlock-error {
   min-height: 1.5rem;
   margin-top: var(--space-2);
@@ -167,10 +385,23 @@ button.secondary:hover:not(:disabled) {
   border-bottom: 1px solid var(--border);
 }
 
+.domains .site {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
 .domains .name {
   min-width: 0;
   overflow-wrap: anywhere;
   font-weight: 600;
+}
+
+/* The wildcard forms under a site: every subdomain, at any depth, is locked with it. */
+.domains .wild {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
 }
 
 .domains button {
@@ -285,6 +516,8 @@ input.narrow {
 :lang(ko) .message,
 :lang(ko) label,
 :lang(ko) .switch span,
+:lang(ko) .preview,
+:lang(ko) .points li,
 :lang(ko) .chips button {
   word-break: keep-all;
   overflow-wrap: break-word;

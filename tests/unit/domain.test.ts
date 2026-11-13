@@ -30,12 +30,39 @@ describe('normalizeDomain', () => {
     }
   });
 
-  it('keeps a subdomain as given', () => {
-    expect(normalizeDomain('m.instagram.com')).toBe('m.instagram.com');
+  it('recognizes the registrable domain behind any subdomain depth', () => {
+    expect(normalizeDomain('m.instagram.com')).toBe('instagram.com');
+    expect(normalizeDomain('a.b.c.example.com')).toBe('example.com');
+    expect(normalizeDomain('*.*.instagram.com')).toBe('instagram.com');
+    expect(normalizeDomain('https://m.blog.naver.com/abc?x=1')).toBe('naver.com');
+  });
+
+  it('recognizes the domain in a full URL with port, credentials, fragment and upper case', () => {
+    expect(normalizeDomain('HTTPS://user:pw@WWW.Blog.Example.COM:8443/a/b?c=d#e')).toBe('example.com');
+    expect(normalizeDomain('  https://x.com/home  ')).toBe('x.com');
+  });
+
+  it('knows multi-label public suffixes, ICANN and private', () => {
+    expect(normalizeDomain('www.bbc.co.uk')).toBe('bbc.co.uk');
+    expect(normalizeDomain('news.bbc.co.uk')).toBe('bbc.co.uk');
+    expect(normalizeDomain('user.github.io')).toBe('user.github.io');
+    expect(normalizeDomain('a.user.github.io')).toBe('user.github.io');
+  });
+
+  it('treats a name under an unknown suffix like .test as a normal domain', () => {
+    expect(normalizeDomain('a.b.example.test')).toBe('example.test');
+    expect(normalizeDomain('noperm.test')).toBe('noperm.test');
+  });
+
+  it('rejects a bare public suffix and a single label', () => {
+    for (const bad of ['co.uk', 'github.io', 'com', 'localhost', 'https://co.uk/']) {
+      expect(normalizeDomain(bad)).toBeNull();
+    }
   });
 
   it('converts internationalized names to punycode', () => {
     expect(normalizeDomain('한국.kr')).toBe('xn--3e0b707e.kr');
+    expect(normalizeDomain('https://www.예시.한국.kr/path')).toBe('xn--3e0b707e.kr');
   });
 
   it('rejects input that is not a registrable-looking http(s) host', () => {

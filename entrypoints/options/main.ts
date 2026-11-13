@@ -5,8 +5,28 @@ import { applyI18n, t } from '../../src/lib/i18n';
 import { send, type ErrorCode, type State } from '../../src/lib/messages';
 import { originPatterns, releasableOrigins } from '../../src/lib/origins';
 import { validatePassword } from '../../src/lib/password';
-import { getSettings, saveSettings, type Settings } from '../../src/lib/settings';
+import { DEFAULT_SETTINGS, getSettings, saveSettings, type Settings } from '../../src/lib/settings';
 import { createCountdown } from '../../src/ui/countdown';
+import {
+  LEARN_MORE_URL,
+  ONBOARDING_KEY,
+  ONBOARDING_STEPS,
+  PRESET_SITES,
+  PRIVACY_URL,
+  REPO_URL,
+  addCustomSite,
+  nextStep,
+  parseProgress,
+  prevStep,
+  previewFor,
+  resumeStep,
+  selectedOrigins,
+  toggleSite,
+  wildcardForms,
+  type OnboardingProgress,
+  type Step,
+} from './onboarding';
+import { sectionFromHash, type Section } from './sections';
 
 type View = 'setup' | 'locked' | 'settings';
 
@@ -20,10 +40,13 @@ function byId<T extends HTMLElement>(id: string): T {
   return el as T;
 }
 
-/** Which of the three screens a worker state calls for. */
+/**
+ * Which of the three screens a worker state calls for. Only the settings unlock opens the settings:
+ * unlocking the sites (lock page) does not, so the options page always asks for the password itself.
+ */
 export function viewFor(state: State): View {
   if (!state.hasPassword) return 'setup';
-  return state.unlocked ? 'settings' : 'locked';
+  return state.settingsUnlocked ? 'settings' : 'locked';
 }
 
 /** The message for a rejected password request. */
@@ -41,12 +64,40 @@ function init(): void {
   };
   const toast = byId('toast');
 
-  // setup
+  const page = byId('page');
+
+  // onboarding (first run)
+  const progressText = byId('ob-progress');
+  const progressSr = byId('ob-progress-sr');
+  const progressBars = [...document.querySelectorAll<HTMLElement>('.progress-bar i')];
+  const stepEls: Record<Step, HTMLElement> = {
+    1: byId('step-1'),
+    2: byId('step-2'),
+    3: byId('step-3'),
+    4: byId('step-4'),
+  };
+  const stepHeadings: Record<Step, HTMLElement> = {
+    1: byId('step-1-title'),
+    2: byId('step-2-title'),
+    3: byId('step-3-title'),
+    4: byId('step-4-title'),
+  };
   const setupForm = byId<HTMLFormElement>('setup-form');
   const setupPassword = byId<HTMLInputElement>('setup-password');
   const setupConfirm = byId<HTMLInputElement>('setup-confirm');
   const setupSubmit = byId<HTMLButtonElement>('setup-submit');
   const setupError = byId('setup-error');
+  const setupDone = byId('setup-done');
+  const chipBox = byId('ob-chips');
+  const obAddForm = byId<HTMLFormElement>('ob-add-form');
+  const obDomain = byId<HTMLInputElement>('ob-domain');
+  const obPreview = byId('ob-preview');
+  const obSiteError = byId('ob-site-error');
+  const obNext = byId<HTMLButtonElement>('next-3');
+  const obIdle = byId<HTMLInputElement>('ob-idle');
+  const obScreenLock = byId<HTMLInputElement>('ob-screen-lock');
+  const obFinish = byId<HTMLButtonElement>('finish');
+  const obFinishError = byId('ob-finish-error');
 
   // unlock
   const unlockForm = byId<HTMLFormElement>('unlock-form');
@@ -62,8 +113,20 @@ function init(): void {
   const domainList = byId<HTMLUListElement>('domains');
   const emptyNote = byId('empty');
   const related = byId('related');
+  const domainPreview = byId('domain-preview');
   const banner = byId('permission-lost');
   const grant = byId<HTMLButtonElement>('grant');
+
+  // settings menu
+  const tip = byId('tip');
+  const menuLinks = [...document.querySelectorAll<HTMLAnchorElement>('#menu a[data-section]')];
+  const panels = [...document.querySelectorAll<HTMLElement>('[data-panel]')];
+  const sectionHeadings: Record<Section, HTMLElement> = {
+    sites: byId('domains-title'),
+    autolock: byId('idle-title'),
+    security: byId('change-title'),
+    about: byId('about-title'),
+  };
 
   // auto-lock and switches
   const idle = byId<HTMLInputElement>('idle');
@@ -90,7 +153,23 @@ function init(): void {
   // newer state check already said locked.
   let epoch = 0;
 
+  // Onboarding progress. The password is created at step 2; from then on the worker already grants
+  // the settings, so the page stays on the steps until Finish instead of jumping to the settings.
+  let step: Step = 1;
+  let passwordCreated = false;
+  let chips: string[] = [...PRESET_SITES];
+  let chosen: string[] = [];
+  let savedByOnboarding: string[] = [];
+  let pendingTip = false;
+
   applyI18n();
+  byId<HTMLAnchorElement>('learn-more').href = LEARN_MORE_URL;
+  byId<HTMLAnchorElement>('link-limits').href = LEARN_MORE_URL;
+  byId<HTMLAnchorElement>('link-privacy').href = PRIVACY_URL;
+  byId<HTMLAnchorElement>('link-repo').href = REPO_URL;
+  byId('about-version').textContent = t('aboutVersion', browser.runtime.getManifest().version);
+  obIdle.value = String(DEFAULT_SETTINGS.idleMinutes);
+  obScreenLock.checked = DEFAULT_SETTINGS.lockOnScreenLock;
   document.documentElement.lang = browser.i18n.getUILanguage();
   document.title = t('extShortName');
   guardRow.hidden = !SETTINGS_GUARD_BUILD;
@@ -128,7 +207,114 @@ function init(): void {
     view = next;
     for (const [name, el] of Object.entries(views)) el.hidden = name !== next;
     lockNow.hidden = next !== 'settings';
-    title.textContent = t(next === 'setup' ? 'setupTitle' : next === 'locked' ? 'settingsLockedTitle' : 'extShortName');
+    page.classList.toggle('wide', next === 'settings');
+    title.textContent = t(next === 'locked' ? 'settingsLockedTitle' : 'extShortName');
+  }
+
+  // ---- settings menu ----
+
+  function showSection(section: Section, focus: boolean): void {
+    for (const panel of panels) panel.hidden = panel.dataset.panel !== section;
+    for (const link of menuLinks) {
+      if (link.dataset.section === section) link.setAttribute('aria-current', 'page');
+      else link.removeAttribute('aria-current');
+    }
+    if (focus) sectionHeadings[section].focus();
+  }
+
+  // ---- onboarding steps ----
+
+  async function readProgress(): Promise<OnboardingProgress | null> {
+    try {
+      return parseProgress((await browser.storage.local.get(ONBOARDING_KEY))[ONBOARDING_KEY]);
+    } catch (err) {
+      console.warn('read onboarding progress failed', err);
+      return null;
+    }
+  }
+
+  function clearProgress(): void {
+    browser.storage.local.remove(ONBOARDING_KEY).catch((err) => console.warn('clear onboarding progress failed', err));
+  }
+
+  /** Kept so that a reload after the password step resumes here instead of jumping to the settings. */
+  function saveProgress(): void {
+    if (!passwordCreated) return;
+    const progress: OnboardingProgress = { step: resumeStep(step), sites: savedByOnboarding };
+    browser.storage.local.set({ [ONBOARDING_KEY]: progress }).catch((err) => console.warn('save onboarding progress failed', err));
+  }
+
+  function showStep(next: Step): void {
+    step = next;
+    for (const [n, el] of Object.entries(stepEls)) el.hidden = Number(n) !== next;
+    progressText.textContent = `${next}/${ONBOARDING_STEPS}`;
+    progressSr.textContent = t('onboardingProgress', [String(next), String(ONBOARDING_STEPS)]);
+    progressBars.forEach((bar, i) => bar.classList.toggle('done', i < next));
+    if (next === 2) {
+      setupForm.hidden = passwordCreated;
+      setupDone.hidden = !passwordCreated;
+    }
+    stepHeadings[next].focus();
+    saveProgress();
+  }
+
+  /** Picks the steps up again after a reload: the password exists, the sites saved so far are chosen. */
+  function resumeOnboarding(progress: OnboardingProgress): void {
+    resetOnboarding();
+    passwordCreated = true;
+    savedByOnboarding = [...progress.sites];
+    chosen = [...progress.sites];
+    chips = [...new Set([...PRESET_SITES, ...progress.sites])];
+    renderChips();
+    showView('setup');
+    showStep(progress.step);
+  }
+
+  /** Back to a clean first run: used whenever the screen is decided afresh as "no password yet". */
+  function resetOnboarding(): void {
+    passwordCreated = false;
+    chips = [...PRESET_SITES];
+    chosen = [];
+    savedByOnboarding = [];
+    setupPassword.value = '';
+    setupConfirm.value = '';
+    for (const el of [setupError, obSiteError, obFinishError]) el.textContent = '';
+    obDomain.value = '';
+    obIdle.value = String(DEFAULT_SETTINGS.idleMinutes);
+    obScreenLock.checked = DEFAULT_SETTINGS.lockOnScreenLock;
+    renderChips();
+  }
+
+  function renderChips(): void {
+    chipBox.replaceChildren(
+      ...chips.map((domain) => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'secondary choice';
+        chip.textContent = domain;
+        chip.setAttribute('aria-pressed', String(chosen.includes(domain)));
+        chip.addEventListener('click', () => {
+          chosen = toggleSite(chosen, domain);
+          chip.setAttribute('aria-pressed', String(chosen.includes(domain)));
+          updateNextLabel();
+        });
+        return chip;
+      }),
+    );
+    updateNextLabel();
+  }
+
+  /** "Skip" while no site is chosen, "Next" once one is. */
+  function updateNextLabel(): void {
+    obNext.textContent = t(chosen.length === 0 ? 'skipButton' : 'nextButton');
+  }
+
+  /** The live line under a site field: what the text will lock, or that it is not a site. */
+  function renderPreview(el: HTMLElement, raw: string): void {
+    const preview = previewFor(raw);
+    el.classList.toggle('invalid', preview.kind === 'invalid');
+    el.textContent =
+      preview.kind === 'ok' ? t('willLock', preview.domain) : preview.kind === 'invalid' ? t('invalidDomain') : '';
   }
 
   /** Leaves nothing of the settings behind once locked: no site names, no typed passwords. */
@@ -138,6 +324,8 @@ function init(): void {
     domainList.replaceChildren();
     related.replaceChildren();
     banner.hidden = true;
+    tip.textContent = '';
+    domainPreview.textContent = '';
     for (const input of [current, next, confirm, domainInput]) input.value = '';
     changeWait.stop();
     changeSubmit.disabled = false;
@@ -147,14 +335,27 @@ function init(): void {
   async function applyState(state: State): Promise<void> {
     const wanted = viewFor(state);
     if (wanted === 'settings' && view === 'settings') return;
+    // Mid-onboarding the worker already grants the settings; the steps run until Finish.
+    if (wanted === 'settings' && view === 'setup' && passwordCreated) return;
     const myEpoch = ++epoch;
     if (wanted === view) return; // locked or setup again: only cancels work still in flight
     const previous = view;
     if (wanted === 'settings') {
+      // A reload during the first run resumes it; Finish removes the record.
+      const resume = await readProgress();
+      if (myEpoch !== epoch) return;
+      if (resume) {
+        resumeOnboarding(resume);
+        return;
+      }
       if (!(await renderSettings(myEpoch))) return; // a newer state replaced this one
     } else {
       clearSettingsView();
+      pendingTip = false;
+      if (wanted === 'locked') passwordCreated = false; // a relock ends a half-done onboarding
     }
+    // Nothing of the first run (site names in the chips) stays in the page outside its steps.
+    if (wanted !== 'setup') resetOnboarding();
     showView(wanted);
     if (wanted === 'locked') {
       unlockPassword.value = '';
@@ -166,10 +367,19 @@ function init(): void {
       }
       unlockPassword.focus();
     } else if (wanted === 'setup') {
-      setupPassword.focus();
-    } else if (previous !== undefined) {
-      // Just unlocked or created the password: the first control is the site field.
-      domainInput.focus();
+      resetOnboarding();
+      clearProgress();
+      showStep(1);
+    } else {
+      const section = sectionFromHash(location.hash);
+      showSection(section, false);
+      if (pendingTip) tip.textContent = t('onboardingDoneTip');
+      pendingTip = false;
+      if (previous !== undefined) {
+        // Just unlocked or finished the first run: the first control of the section.
+        if (section === 'sites') domainInput.focus();
+        else sectionHeadings[section].focus();
+      }
     }
   }
 
@@ -200,16 +410,22 @@ function init(): void {
     domainList.replaceChildren(
       ...domains.map((domain) => {
         const li = document.createElement('li');
+        const site = document.createElement('div');
+        site.className = 'site';
         const name = document.createElement('span');
         name.className = 'name';
         name.textContent = domain;
+        const wild = document.createElement('span');
+        wild.className = 'wild';
+        wild.textContent = wildcardForms(domain);
+        site.append(name, wild);
         const remove = document.createElement('button');
         remove.type = 'button';
         remove.className = 'secondary';
         remove.textContent = t('removeButton');
         remove.setAttribute('aria-label', `${t('removeButton')}: ${domain}`);
         remove.addEventListener('click', () => void removeDomain(domain));
-        li.append(name, remove);
+        li.append(site, remove);
         return li;
       }),
     );
@@ -263,6 +479,7 @@ function init(): void {
     }
     if (settings?.domains.includes(domain)) {
       domainInput.value = '';
+      renderPreview(domainPreview, '');
       return;
     }
     // permissions.request needs the user gesture of this click or submit: start it before any await.
@@ -286,6 +503,7 @@ function init(): void {
       settings = saved;
       domainError.textContent = '';
       domainInput.value = '';
+      renderPreview(domainPreview, '');
       renderDomains();
       showToast(t('saved'));
       await renderBanner(startEpoch);
@@ -352,7 +570,14 @@ function init(): void {
       setupSubmit.disabled = true;
       try {
         const res = await send({ type: 'setup', password });
-        if (res.ok || res.error === 'already_set') {
+        if (res.ok) {
+          setupPassword.value = '';
+          setupConfirm.value = '';
+          // Cancels a render a state check started meanwhile, then goes on to the sites step.
+          epoch++;
+          passwordCreated = true;
+          showStep(3);
+        } else if (res.error === 'already_set') {
           setupPassword.value = '';
           setupConfirm.value = '';
           await applyState(res.state);
@@ -377,7 +602,7 @@ function init(): void {
       unlockWait.stop();
       unlockError.textContent = '';
       try {
-        const res = await send({ type: 'unlock', password: unlockPassword.value });
+        const res = await send({ type: 'unlockSettings', password: unlockPassword.value });
         unlockPassword.value = '';
         if (res.ok) {
           await applyState(res.state);
@@ -392,6 +617,103 @@ function init(): void {
         if (!unlockWait.active) unlockSubmit.disabled = false;
       }
     })();
+  });
+
+  byId('ob-start').addEventListener('click', () => showStep(2));
+  byId('back-2').addEventListener('click', () => {
+    setupPassword.value = '';
+    setupConfirm.value = '';
+    setupError.textContent = '';
+    showStep(1);
+  });
+  byId('back-2-done').addEventListener('click', () => showStep(1));
+  byId('next-2-done').addEventListener('click', () => showStep(3));
+  byId('back-3').addEventListener('click', () => showStep(prevStep(3)));
+  byId('back-4').addEventListener('click', () => showStep(prevStep(4)));
+
+  obAddForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    obSiteError.textContent = '';
+    const added = addCustomSite(chips, chosen, obDomain.value);
+    if (!added) {
+      obSiteError.textContent = t('invalidDomain');
+      return;
+    }
+    chips = added.chips;
+    chosen = added.selected;
+    obDomain.value = '';
+    renderPreview(obPreview, '');
+    renderChips();
+  });
+  obDomain.addEventListener('input', () => renderPreview(obPreview, obDomain.value));
+
+  obNext.addEventListener('click', () => {
+    obSiteError.textContent = '';
+    const sites = [...chosen];
+    // One request for every chosen site, started right here: Chrome needs the user gesture of this click.
+    const request = sites.length > 0 ? browser.permissions.request({ origins: selectedOrigins(sites) }) : undefined;
+    void finishSites(sites, request);
+  });
+
+  async function finishSites(sites: string[], request: Promise<boolean> | undefined): Promise<void> {
+    const startEpoch = epoch;
+    obNext.disabled = true;
+    try {
+      const granted = request ? await request : true;
+      if (startEpoch !== epoch) return;
+      if (!granted) {
+        obSiteError.textContent = t('permissionDenied');
+        return;
+      }
+      const stored = await getSettings();
+      if (startEpoch !== epoch) return;
+      // Replace what an earlier pass over this step saved; leave anything else in the list alone.
+      const kept = stored.domains.filter((d) => !savedByOnboarding.includes(d));
+      await saveSettings({ domains: [...kept, ...sites] });
+      if (startEpoch !== epoch) return;
+      savedByOnboarding = sites;
+      showStep(nextStep(3));
+    } catch (err) {
+      if (startEpoch !== epoch) return;
+      console.warn('save sites failed', err);
+      obSiteError.textContent = t('permissionDenied');
+    } finally {
+      obNext.disabled = false;
+    }
+  }
+
+  obFinish.addEventListener('click', () => {
+    void (async () => {
+      const startEpoch = epoch;
+      obFinish.disabled = true;
+      obFinishError.textContent = '';
+      try {
+        const minutes = obIdle.valueAsNumber;
+        // saveSettings rounds and clamps the minutes to 1-60.
+        await saveSettings({
+          idleMinutes: Number.isNaN(minutes) ? DEFAULT_SETTINGS.idleMinutes : minutes,
+          lockOnScreenLock: obScreenLock.checked,
+        });
+        if (startEpoch !== epoch) return;
+        // Leave the steps: the next state check shows the settings (or the unlock form if it locked).
+        passwordCreated = false;
+        pendingTip = true;
+        await browser.storage.local.remove(ONBOARDING_KEY);
+        await refreshState();
+      } catch (err) {
+        console.warn('finish failed', err);
+      } finally {
+        obFinish.disabled = false;
+      }
+    })();
+  });
+
+  domainInput.addEventListener('input', () => renderPreview(domainPreview, domainInput.value));
+
+  window.addEventListener('hashchange', () => {
+    if (view !== 'settings') return;
+    tip.textContent = ''; // the first-run tip belongs to the screen that showed it
+    showSection(sectionFromHash(location.hash), true);
   });
 
   addForm.addEventListener('submit', (event) => {

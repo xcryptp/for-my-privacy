@@ -57,10 +57,10 @@
     "message": "잠글 사이트"
   },
   "domainsHint": {
-    "message": "사이트를 추가하면 그 하위 주소도 모두 함께 잠깁니다."
+    "message": "어떤 주소든 붙여 넣으세요. 그 사이트와 모든 하위 주소가 함께 잠깁니다. 예: *.example.com"
   },
   "addDomainPlaceholder": {
-    "message": "example.com"
+    "message": "example.com 또는 *.example.com"
   },
   "addButton": {
     "message": "추가"
@@ -117,9 +117,90 @@
     "message": "사이트 접근 권한이 사라졌습니다"
   },
   "permissionLostBody": {
-    "message": "잠긴 사이트는 계속 차단되지만, 잠금 화면이 나타나지 않습니다. 접근 권한을 다시 허용하세요."
+    "message": "잠금은 그대로 유지되지만, 사이트 접근 권한이 없으면 잠금 화면이 뜨기 전에 Chrome의 차단 화면이 잠깐 보일 수 있습니다. 접근 권한을 다시 허용하면 더 매끄럽게 잠깁니다."
   },
   "grantButton": {
     "message": "접근 권한 허용"
+  },
+  "menuLabel": {
+    "message": "설정 메뉴"
+  },
+  "menuSites": {
+    "message": "사이트"
+  },
+  "menuAutolock": {
+    "message": "자동 잠금"
+  },
+  "menuSecurity": {
+    "message": "보안"
+  },
+  "menuAbout": {
+    "message": "정보"
+  },
+  "guardTitle": {
+    "message": "확장 프로그램 페이지"
+  },
+  "aboutVersion": {
+    "message": "버전 $1"
+  },
+  "aboutLimits": {
+    "message": "보호하는 것과 보호하지 못하는 것"
+  },
+  "aboutPrivacy": {
+    "message": "개인정보 처리방침"
+  },
+  "aboutRepo": {
+    "message": "GitHub 소스 코드"
+  },
+  "willLock": {
+    "message": "잠길 사이트: $1 (모든 하위 주소 포함)"
+  },
+  "onboardingProgress": {
+    "message": "$2단계 중 $1단계"
+  },
+  "onboardingWelcomeTitle": {
+    "message": "환영합니다"
+  },
+  "onboardingWelcomeLine1": {
+    "message": "고른 사이트를 비밀번호로 잠가 줍니다."
+  },
+  "onboardingWelcomeLine2": {
+    "message": "컴퓨터 앞을 떠나면 다시 잠급니다."
+  },
+  "onboardingWelcomeLine3": {
+    "message": "막을 수 없는 것도 있습니다."
+  },
+  "onboardingLearnMore": {
+    "message": "자세히 보기"
+  },
+  "onboardingStart": {
+    "message": "시작하기"
+  },
+  "backButton": {
+    "message": "이전"
+  },
+  "nextButton": {
+    "message": "다음"
+  },
+  "skipButton": {
+    "message": "건너뛰기"
+  },
+  "finishButton": {
+    "message": "완료"
+  },
+  "onboardingPasswordDone": {
+    "message": "비밀번호가 설정되었습니다."
+  },
+  "onboardingSitesTitle": {
+    "message": "잠글 사이트 고르기"
+  },
+  "onboardingSitesHint": {
+    "message": "지금 잠그고 싶은 사이트를 고르세요. Chrome이 접근 허용을 한 번 물어봅니다. 목록은 나중에 바꿀 수 있습니다."
+  },
+  "onboardingCustomLabel": {
+    "message": "다른 사이트"
+  },
+  "onboardingDoneTip": {
+    "message": "준비가 끝났습니다. 고른 사이트는 지금 잠겨 있습니다. 새 탭에서 열어 잠금 화면을 확인해 보세요."
   }
 }

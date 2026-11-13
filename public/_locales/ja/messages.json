@@ -57,10 +57,10 @@
     "message": "ロックするサイト"
   },
   "domainsHint": {
-    "message": "サイトを追加すると、そのサブドメインもすべてロックされます。"
+    "message": "どんなアドレスでも貼り付けられます。そのサイトとすべてのサブドメインがロックされます。例: *.example.com"
   },
   "addDomainPlaceholder": {
-    "message": "example.com"
+    "message": "example.com または *.example.com"
   },
   "addButton": {
     "message": "追加"
@@ -117,9 +117,90 @@
     "message": "サイトへのアクセス許可が取り消されました"
   },
   "permissionLostBody": {
-    "message": "ロックしたサイトはブロックされたままですが、ロック画面が表示されません。アクセスをもう一度許可してください。"
+    "message": "ロックは保たれますが、サイトへのアクセス権がないと、ロック画面の前に Chrome のブロック画面が一瞬表示されることがあります。アクセスを許可し直すと、よりスムーズにロックされます。"
   },
   "grantButton": {
     "message": "アクセスを許可"
+  },
+  "menuLabel": {
+    "message": "設定メニュー"
+  },
+  "menuSites": {
+    "message": "サイト"
+  },
+  "menuAutolock": {
+    "message": "自動ロック"
+  },
+  "menuSecurity": {
+    "message": "セキュリティ"
+  },
+  "menuAbout": {
+    "message": "情報"
+  },
+  "guardTitle": {
+    "message": "拡張機能ページ"
+  },
+  "aboutVersion": {
+    "message": "バージョン $1"
+  },
+  "aboutLimits": {
+    "message": "守れるものと守れないもの"
+  },
+  "aboutPrivacy": {
+    "message": "プライバシーポリシー"
+  },
+  "aboutRepo": {
+    "message": "GitHub のソースコード"
+  },
+  "willLock": {
+    "message": "$1 とそのすべてのサブドメインをロックします。"
+  },
+  "onboardingProgress": {
+    "message": "$2 ステップ中 $1 ステップ目"
+  },
+  "onboardingWelcomeTitle": {
+    "message": "ようこそ"
+  },
+  "onboardingWelcomeLine1": {
+    "message": "選んだサイトをパスワードでロックします。"
+  },
+  "onboardingWelcomeLine2": {
+    "message": "パソコンから離れると、もう一度ロックします。"
+  },
+  "onboardingWelcomeLine3": {
+    "message": "防げないこともあります。"
+  },
+  "onboardingLearnMore": {
+    "message": "詳しく見る"
+  },
+  "onboardingStart": {
+    "message": "始める"
+  },
+  "backButton": {
+    "message": "戻る"
+  },
+  "nextButton": {
+    "message": "次へ"
+  },
+  "skipButton": {
+    "message": "スキップ"
+  },
+  "finishButton": {
+    "message": "完了"
+  },
+  "onboardingPasswordDone": {
+    "message": "パスワードを設定しました。"
+  },
+  "onboardingSitesTitle": {
+    "message": "ロックするサイトを選ぶ"
+  },
+  "onboardingSitesHint": {
+    "message": "今ロックしたいサイトを選んでください。Chrome がアクセスの許可を一度だけ確認します。リストはあとから変更できます。"
+  },
+  "onboardingCustomLabel": {
+    "message": "ほかのサイト"
+  },
+  "onboardingDoneTip": {
+    "message": "準備ができました。選んだサイトは今ロックされています。新しいタブで開いて、ロック画面を確認してください。"
   }
 }

@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
-    <main class="page">
+    <main id="page" class="page">
       <header class="head">
         <svg class="icon" viewBox="0 0 24 24" width="36" height="36" aria-hidden="true" focusable="false">
           <rect x="4.5" y="10.5" width="15" height="10" rx="2.5" fill="currentColor" />
@@ -26,17 +26,100 @@
         <button id="lock-now" type="button" class="secondary" data-i18n="lockNowButton" hidden></button>
       </header>
 
-      <!-- No password yet -->
+      <!-- First run, no password yet: four onboarding steps (step 3 and 4 run after the worker granted the settings) -->
       <section id="view-setup" class="card" hidden>
-        <p id="setup-hint" class="muted" data-i18n="setupHint"></p>
-        <form id="setup-form" class="form" autocomplete="off">
-          <label for="setup-password" data-i18n="passwordLabel"></label>
-          <input id="setup-password" type="password" autocomplete="new-password" required />
-          <label for="setup-confirm" class="spaced" data-i18n="confirmPasswordLabel"></label>
-          <input id="setup-confirm" type="password" autocomplete="new-password" required />
-          <p id="setup-error" class="message error" role="alert"></p>
-          <button id="setup-submit" type="submit" data-i18n="createButton"></button>
-        </form>
+        <div class="progress">
+          <p class="progress-text">
+            <span id="ob-progress" aria-hidden="true"></span>
+            <span id="ob-progress-sr" class="visually-hidden"></span>
+          </p>
+          <div class="progress-bar" aria-hidden="true">
+            <i></i><i></i><i></i><i></i>
+          </div>
+        </div>
+
+        <div id="step-1" class="step" hidden>
+          <h2 id="step-1-title" tabindex="-1" data-i18n="onboardingWelcomeTitle"></h2>
+          <ul class="points">
+            <li data-i18n="onboardingWelcomeLine1"></li>
+            <li data-i18n="onboardingWelcomeLine2"></li>
+            <li>
+              <span data-i18n="onboardingWelcomeLine3"></span>
+              <a id="learn-more" target="_blank" rel="noopener noreferrer" data-i18n="onboardingLearnMore"></a>
+            </li>
+          </ul>
+          <div class="actions">
+            <button id="ob-start" type="button" data-i18n="onboardingStart"></button>
+          </div>
+        </div>
+
+        <div id="step-2" class="step" hidden>
+          <h2 id="step-2-title" tabindex="-1" data-i18n="setupTitle"></h2>
+          <form id="setup-form" class="form" autocomplete="off">
+            <p id="setup-hint" class="muted" data-i18n="setupHint"></p>
+            <label for="setup-password" class="spaced" data-i18n="passwordLabel"></label>
+            <input id="setup-password" type="password" autocomplete="new-password" required />
+            <label for="setup-confirm" class="spaced" data-i18n="confirmPasswordLabel"></label>
+            <input id="setup-confirm" type="password" autocomplete="new-password" required />
+            <p id="setup-error" class="message error" role="alert"></p>
+            <div class="actions">
+              <button id="back-2" type="button" class="secondary" data-i18n="backButton"></button>
+              <button id="setup-submit" type="submit" data-i18n="createButton"></button>
+            </div>
+          </form>
+          <!-- Shown instead of the form when Back leads here after the password exists -->
+          <div id="setup-done" class="stack-sm" hidden>
+            <p class="muted" data-i18n="onboardingPasswordDone"></p>
+            <div class="actions">
+              <button id="back-2-done" type="button" class="secondary" data-i18n="backButton"></button>
+              <button id="next-2-done" type="button" data-i18n="nextButton"></button>
+            </div>
+          </div>
+        </div>
+
+        <div id="step-3" class="step" hidden>
+          <h2 id="step-3-title" tabindex="-1" data-i18n="onboardingSitesTitle"></h2>
+          <p class="muted" data-i18n="onboardingSitesHint"></p>
+          <div id="ob-chips" class="chips" role="group" aria-labelledby="step-3-title"></div>
+          <div class="field">
+            <label for="ob-domain" data-i18n="onboardingCustomLabel"></label>
+            <form id="ob-add-form" class="row" autocomplete="off" novalidate>
+              <input
+                id="ob-domain"
+                type="text"
+                inputmode="url"
+                autocapitalize="off"
+                spellcheck="false"
+                aria-describedby="ob-preview ob-site-error"
+                data-i18n-placeholder="addDomainPlaceholder"
+              />
+              <button id="ob-add" type="submit" class="secondary" data-i18n="addButton"></button>
+            </form>
+          </div>
+          <p id="ob-preview" class="preview"></p>
+          <p id="ob-site-error" class="message error" role="alert"></p>
+          <div class="actions">
+            <button id="back-3" type="button" class="secondary" data-i18n="backButton"></button>
+            <button id="next-3" type="button"></button>
+          </div>
+        </div>
+
+        <div id="step-4" class="step" hidden>
+          <h2 id="step-4-title" tabindex="-1" data-i18n="idleTitle"></h2>
+          <div class="field">
+            <label for="ob-idle" data-i18n="idleMinutesLabel"></label>
+            <input id="ob-idle" class="narrow" type="number" min="1" max="60" step="1" inputmode="numeric" />
+          </div>
+          <label class="switch" for="ob-screen-lock">
+            <input id="ob-screen-lock" type="checkbox" role="switch" />
+            <span data-i18n="screenLockLabel"></span>
+          </label>
+          <p id="ob-finish-error" class="message error" role="alert"></p>
+          <div class="actions">
+            <button id="back-4" type="button" class="secondary" data-i18n="backButton"></button>
+            <button id="finish" type="button" data-i18n="finishButton"></button>
+          </div>
+        </div>
       </section>
 
       <!-- Password set, locked: nothing but the unlock form -->
@@ -49,68 +132,100 @@
         </form>
       </section>
 
-      <!-- Unlocked -->
-      <div id="view-settings" class="stack" hidden>
-        <section id="permission-lost" class="notice" aria-labelledby="permission-lost-title" hidden>
-          <h2 id="permission-lost-title" data-i18n="permissionLostTitle"></h2>
-          <p data-i18n="permissionLostBody"></p>
-          <button id="grant" type="button" data-i18n="grantButton"></button>
-        </section>
+      <!-- Unlocked: a menu (sidebar, or tab bar on a narrow screen) and one section at a time -->
+      <div id="view-settings" class="settings" hidden>
+        <nav id="menu" class="menu" data-i18n-aria="menuLabel">
+          <a href="#sites" data-section="sites" data-i18n="menuSites"></a>
+          <a href="#autolock" data-section="autolock" data-i18n="menuAutolock"></a>
+          <a href="#security" data-section="security" data-i18n="menuSecurity"></a>
+          <a href="#about" data-section="about" data-i18n="menuAbout"></a>
+        </nav>
 
-        <section class="card" aria-labelledby="domains-title">
-          <h2 id="domains-title" data-i18n="domainsTitle"></h2>
-          <p class="muted" data-i18n="domainsHint"></p>
-          <form id="add-form" class="row" autocomplete="off" novalidate>
-            <input
-              id="domain"
-              type="text"
-              inputmode="url"
-              autocapitalize="off"
-              spellcheck="false"
-              aria-labelledby="domains-title"
-              aria-describedby="domain-error"
-              data-i18n-placeholder="addDomainPlaceholder"
-            />
-            <button id="add" type="submit" data-i18n="addButton"></button>
-          </form>
-          <p id="domain-error" class="message error" role="alert"></p>
-          <ul id="domains" class="domains"></ul>
-          <p id="empty" class="muted" data-i18n="emptyDomains" hidden></p>
-          <div id="related" class="chips"></div>
-        </section>
+        <div class="panels">
+          <p id="tip" class="tip" role="status"></p>
 
-        <section class="card" aria-labelledby="idle-title">
-          <h2 id="idle-title" data-i18n="idleTitle"></h2>
-          <div class="field">
-            <label for="idle" data-i18n="idleMinutesLabel"></label>
-            <input id="idle" class="narrow" type="number" min="1" max="60" step="1" inputmode="numeric" />
+          <div id="panel-sites" class="stack" data-panel="sites" hidden>
+            <section id="permission-lost" class="notice" aria-labelledby="permission-lost-title" hidden>
+              <h2 id="permission-lost-title" data-i18n="permissionLostTitle"></h2>
+              <p data-i18n="permissionLostBody"></p>
+              <button id="grant" type="button" data-i18n="grantButton"></button>
+            </section>
+
+            <section class="card" aria-labelledby="domains-title">
+              <h2 id="domains-title" tabindex="-1" data-i18n="domainsTitle"></h2>
+              <p class="muted" data-i18n="domainsHint"></p>
+              <form id="add-form" class="row" autocomplete="off" novalidate>
+                <input
+                  id="domain"
+                  type="text"
+                  inputmode="url"
+                  autocapitalize="off"
+                  spellcheck="false"
+                  aria-labelledby="domains-title"
+                  aria-describedby="domain-preview domain-error"
+                  data-i18n-placeholder="addDomainPlaceholder"
+                />
+                <button id="add" type="submit" data-i18n="addButton"></button>
+              </form>
+              <p id="domain-preview" class="preview"></p>
+              <p id="domain-error" class="message error" role="alert"></p>
+              <ul id="domains" class="domains"></ul>
+              <p id="empty" class="muted" data-i18n="emptyDomains" hidden></p>
+              <div id="related" class="chips"></div>
+            </section>
           </div>
-          <label class="switch" for="screen-lock">
-            <input id="screen-lock" type="checkbox" role="switch" />
-            <span data-i18n="screenLockLabel"></span>
-          </label>
-          <div id="guard-row" hidden>
-            <label class="switch" for="guard">
-              <input id="guard" type="checkbox" role="switch" aria-describedby="guard-hint" />
-              <span data-i18n="guardLabel"></span>
-            </label>
-            <p id="guard-hint" class="muted hint" data-i18n="guardHint"></p>
-          </div>
-        </section>
 
-        <section class="card" aria-labelledby="change-title">
-          <h2 id="change-title" data-i18n="changePasswordTitle"></h2>
-          <form id="change-form" class="form" autocomplete="off">
-            <label for="current" data-i18n="currentPasswordLabel"></label>
-            <input id="current" type="password" autocomplete="new-password" required />
-            <label for="next" class="spaced" data-i18n="newPasswordLabel"></label>
-            <input id="next" type="password" autocomplete="new-password" required />
-            <label for="change-confirm" class="spaced" data-i18n="confirmPasswordLabel"></label>
-            <input id="change-confirm" type="password" autocomplete="new-password" required />
-            <p id="change-error" class="message error" role="alert"></p>
-            <button id="change-submit" type="submit" data-i18n="saveButton"></button>
-          </form>
-        </section>
+          <div id="panel-autolock" class="stack" data-panel="autolock" hidden>
+            <section class="card" aria-labelledby="idle-title">
+              <h2 id="idle-title" tabindex="-1" data-i18n="idleTitle"></h2>
+              <div class="field">
+                <label for="idle" data-i18n="idleMinutesLabel"></label>
+                <input id="idle" class="narrow" type="number" min="1" max="60" step="1" inputmode="numeric" />
+              </div>
+              <label class="switch" for="screen-lock">
+                <input id="screen-lock" type="checkbox" role="switch" />
+                <span data-i18n="screenLockLabel"></span>
+              </label>
+            </section>
+          </div>
+
+          <div id="panel-security" class="stack" data-panel="security" hidden>
+            <section class="card" aria-labelledby="change-title">
+              <h2 id="change-title" tabindex="-1" data-i18n="changePasswordTitle"></h2>
+              <form id="change-form" class="form" autocomplete="off">
+                <label for="current" data-i18n="currentPasswordLabel"></label>
+                <input id="current" type="password" autocomplete="new-password" required />
+                <label for="next" class="spaced" data-i18n="newPasswordLabel"></label>
+                <input id="next" type="password" autocomplete="new-password" required />
+                <label for="change-confirm" class="spaced" data-i18n="confirmPasswordLabel"></label>
+                <input id="change-confirm" type="password" autocomplete="new-password" required />
+                <p id="change-error" class="message error" role="alert"></p>
+                <button id="change-submit" type="submit" data-i18n="saveButton"></button>
+              </form>
+            </section>
+
+            <section id="guard-row" class="card" aria-labelledby="guard-title" hidden>
+              <h2 id="guard-title" tabindex="-1" data-i18n="guardTitle"></h2>
+              <label class="switch" for="guard">
+                <input id="guard" type="checkbox" role="switch" aria-describedby="guard-hint" />
+                <span data-i18n="guardLabel"></span>
+              </label>
+              <p id="guard-hint" class="muted hint" data-i18n="guardHint"></p>
+            </section>
+          </div>
+
+          <div id="panel-about" class="stack" data-panel="about" hidden>
+            <section class="card" aria-labelledby="about-title">
+              <h2 id="about-title" tabindex="-1" data-i18n="menuAbout"></h2>
+              <p id="about-version" class="muted"></p>
+              <ul class="links">
+                <li><a id="link-limits" target="_blank" rel="noopener noreferrer" data-i18n="aboutLimits"></a></li>
+                <li><a id="link-privacy" target="_blank" rel="noopener noreferrer" data-i18n="aboutPrivacy"></a></li>
+                <li><a id="link-repo" target="_blank" rel="noopener noreferrer" data-i18n="aboutRepo"></a></li>
+              </ul>
+            </section>
+          </div>
+        </div>
       </div>
     </main>
     <p id="toast" class="toast" role="status"></p>
