@@ -1,0 +1,117 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="manifest.open_in_tab" content="true" />
+    <title data-i18n="extShortName">For My Privacy</title>
+    <link rel="stylesheet" href="../../src/ui/base.css" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="head">
+        <svg class="icon" viewBox="0 0 24 24" width="36" height="36" aria-hidden="true" focusable="false">
+          <rect x="4.5" y="10.5" width="15" height="10" rx="2.5" fill="currentColor" />
+          <path
+            d="M8 10.5V8a4 4 0 0 1 8 0v2.5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+          />
+        </svg>
+        <h1 id="title"></h1>
+        <button id="lock-now" type="button" class="secondary" data-i18n="lockNowButton" hidden></button>
+      </header>
+
+      <!-- No password yet -->
+      <section id="view-setup" class="card" hidden>
+        <p id="setup-hint" class="muted" data-i18n="setupHint"></p>
+        <form id="setup-form" class="form" autocomplete="off">
+          <label for="setup-password" data-i18n="passwordLabel"></label>
+          <input id="setup-password" type="password" autocomplete="new-password" required />
+          <label for="setup-confirm" class="spaced" data-i18n="confirmPasswordLabel"></label>
+          <input id="setup-confirm" type="password" autocomplete="new-password" required />
+          <p id="setup-error" class="message error" role="alert"></p>
+          <button id="setup-submit" type="submit" data-i18n="createButton"></button>
+        </form>
+      </section>
+
+      <!-- Password set, locked: nothing but the unlock form -->
+      <section id="view-locked" class="card" hidden>
+        <form id="unlock-form" class="form" autocomplete="off">
+          <label for="unlock-password" data-i18n="passwordLabel"></label>
+          <input id="unlock-password" type="password" autocomplete="current-password" required />
+          <p id="unlock-error" class="message error" role="alert"></p>
+          <button id="unlock-submit" type="submit" data-i18n="unlockButton"></button>
+        </form>
+      </section>
+
+      <!-- Unlocked -->
+      <div id="view-settings" class="stack" hidden>
+        <section id="permission-lost" class="notice" aria-labelledby="permission-lost-title" hidden>
+          <h2 id="permission-lost-title" data-i18n="permissionLostTitle"></h2>
+          <p data-i18n="permissionLostBody"></p>
+          <button id="grant" type="button" data-i18n="grantButton"></button>
+        </section>
+
+        <section class="card" aria-labelledby="domains-title">
+          <h2 id="domains-title" data-i18n="domainsTitle"></h2>
+          <p class="muted" data-i18n="domainsHint"></p>
+          <form id="add-form" class="row" autocomplete="off" novalidate>
+            <input
+              id="domain"
+              type="text"
+              inputmode="url"
+              autocapitalize="off"
+              spellcheck="false"
+              aria-labelledby="domains-title"
+              aria-describedby="domain-error"
+              data-i18n-placeholder="addDomainPlaceholder"
+            />
+            <button id="add" type="submit" data-i18n="addButton"></button>
+          </form>
+          <p id="domain-error" class="message error" role="alert"></p>
+          <ul id="domains" class="domains"></ul>
+          <p id="empty" class="muted" data-i18n="emptyDomains" hidden></p>
+          <div id="related" class="chips"></div>
+        </section>
+
+        <section class="card" aria-labelledby="idle-title">
+          <h2 id="idle-title" data-i18n="idleTitle"></h2>
+          <div class="field">
+            <label for="idle" data-i18n="idleMinutesLabel"></label>
+            <input id="idle" class="narrow" type="number" min="1" max="60" step="1" inputmode="numeric" />
+          </div>
+          <label class="switch" for="screen-lock">
+            <input id="screen-lock" type="checkbox" role="switch" />
+            <span data-i18n="screenLockLabel"></span>
+          </label>
+          <div id="guard-row" hidden>
+            <label class="switch" for="guard">
+              <input id="guard" type="checkbox" role="switch" aria-describedby="guard-hint" />
+              <span data-i18n="guardLabel"></span>
+            </label>
+            <p id="guard-hint" class="muted hint" data-i18n="guardHint"></p>
+          </div>
+        </section>
+
+        <section class="card" aria-labelledby="change-title">
+          <h2 id="change-title" data-i18n="changePasswordTitle"></h2>
+          <form id="change-form" class="form" autocomplete="off">
+            <label for="current" data-i18n="currentPasswordLabel"></label>
+            <input id="current" type="password" autocomplete="current-password" required />
+            <label for="next" class="spaced" data-i18n="newPasswordLabel"></label>
+            <input id="next" type="password" autocomplete="new-password" required />
+            <p id="change-error" class="message error" role="alert"></p>
+            <button id="change-submit" type="submit" data-i18n="saveButton"></button>
+          </form>
+        </section>
+      </div>
+    </main>
+    <p id="toast" class="toast" role="status"></p>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

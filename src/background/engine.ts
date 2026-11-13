@@ -357,6 +357,5 @@ export async function onPermissionsRemoved(): Promise<void> {
   const { domains } = await getSettings();
   const granted = await domainsWithHostAccess(domains);
   if (granted.length === domains.length) return;
-  // The cast is needed until the options entrypoint exists and WXT types its path.
-  await browser.tabs.create({ url: browser.runtime.getURL('/options.html#permission-lost' as never) });
+  await browser.tabs.create({ url: browser.runtime.getURL('/options.html#permission-lost') });
 }
