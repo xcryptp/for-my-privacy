@@ -1,0 +1,125 @@
+{
+  "extName": {
+    "message": "For My Privacy: サイトパスワードロック"
+  },
+  "extShortName": {
+    "message": "For My Privacy"
+  },
+  "extDescription": {
+    "message": "選んだサイトとそのサブドメインをすべてパスワードでロックします。席を離れると、自動でもう一度ロックされます。"
+  },
+  "lockTitle": {
+    "message": "このサイトはロックされています"
+  },
+  "lockSubtitle": {
+    "message": "$1を開くにはパスワードを入力してください。"
+  },
+  "passwordLabel": {
+    "message": "パスワード"
+  },
+  "unlockButton": {
+    "message": "ロック解除"
+  },
+  "wrongPassword": {
+    "message": "パスワードが違います。"
+  },
+  "tooManyAttempts": {
+    "message": "試行回数が多すぎます。$1待ってから、もう一度お試しください。"
+  },
+  "unlockedNoReturn": {
+    "message": "ロックを解除しました。サイトをもう一度開けます。"
+  },
+  "openSettings": {
+    "message": "設定"
+  },
+  "settingsLockedTitle": {
+    "message": "設定はロックされています"
+  },
+  "setupTitle": {
+    "message": "パスワードを作成"
+  },
+  "setupHint": {
+    "message": "8文字以上で入力してください。パスワードは復元できません。忘れた場合は、拡張機能を入れ直してください。"
+  },
+  "confirmPasswordLabel": {
+    "message": "パスワードの確認"
+  },
+  "passwordMismatch": {
+    "message": "パスワードが一致しません。"
+  },
+  "passwordTooShort": {
+    "message": "8文字以上で入力してください。"
+  },
+  "createButton": {
+    "message": "パスワードを作成"
+  },
+  "domainsTitle": {
+    "message": "ロックするサイト"
+  },
+  "domainsHint": {
+    "message": "各サイトは、そのサブドメインもすべてロックします。"
+  },
+  "addDomainPlaceholder": {
+    "message": "example.com"
+  },
+  "addButton": {
+    "message": "追加"
+  },
+  "removeButton": {
+    "message": "削除"
+  },
+  "emptyDomains": {
+    "message": "まだサイトがありません。"
+  },
+  "invalidDomain": {
+    "message": "example.com のようなサイトのアドレスを入力してください。"
+  },
+  "permissionDenied": {
+    "message": "Chromeがこのサイトへのアクセスを許可しなかったため、追加できませんでした。"
+  },
+  "relatedSuggestion": {
+    "message": "$1もロックしますか？"
+  },
+  "idleTitle": {
+    "message": "自動でもう一度ロック"
+  },
+  "idleMinutesLabel": {
+    "message": "キーボードもマウスも使わない時間（分）"
+  },
+  "screenLockLabel": {
+    "message": "画面がロックされたらロックする"
+  },
+  "guardLabel": {
+    "message": "Chromeの拡張機能ページを開く前にパスワードを確認する"
+  },
+  "guardHint": {
+    "message": "ツールバーのメニューから拡張機能を削除することは防げません。READMEをご覧ください。"
+  },
+  "changePasswordTitle": {
+    "message": "パスワードを変更"
+  },
+  "currentPasswordLabel": {
+    "message": "現在のパスワード"
+  },
+  "newPasswordLabel": {
+    "message": "新しいパスワード"
+  },
+  "saveButton": {
+    "message": "保存"
+  },
+  "saved": {
+    "message": "保存しました。"
+  },
+  "lockNowButton": {
+    "message": "今すぐロック"
+  },
+  "permissionLostTitle": {
+    "message": "サイトへのアクセスが削除されました"
+  },
+  "permissionLostBody": {
+    "message": "ロックしたサイトはブロックされたままですが、ロック画面を開けません。アクセスをもう一度許可してください。"
+  },
+  "grantButton": {
+    "message": "アクセスを許可"
+  }
+}

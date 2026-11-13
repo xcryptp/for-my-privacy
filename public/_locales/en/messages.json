@@ -1,5 +1,125 @@
 {
-  "extName": { "message": "For My Privacy: Site Password Lock" },
-  "extShortName": { "message": "For My Privacy" },
-  "extDescription": { "message": "Lock chosen sites and all their subdomains behind a password. It locks again when you step away." }
+  "extName": {
+    "message": "For My Privacy: Site Password Lock"
+  },
+  "extShortName": {
+    "message": "For My Privacy"
+  },
+  "extDescription": {
+    "message": "Lock chosen sites and all their subdomains behind a password. It locks again when you step away."
+  },
+  "lockTitle": {
+    "message": "This site is locked"
+  },
+  "lockSubtitle": {
+    "message": "Enter your password to open $1."
+  },
+  "passwordLabel": {
+    "message": "Password"
+  },
+  "unlockButton": {
+    "message": "Unlock"
+  },
+  "wrongPassword": {
+    "message": "Wrong password."
+  },
+  "tooManyAttempts": {
+    "message": "Too many attempts. Try again in $1."
+  },
+  "unlockedNoReturn": {
+    "message": "Unlocked. You can open your site again."
+  },
+  "openSettings": {
+    "message": "Settings"
+  },
+  "settingsLockedTitle": {
+    "message": "Settings are locked"
+  },
+  "setupTitle": {
+    "message": "Create a password"
+  },
+  "setupHint": {
+    "message": "Use at least 8 characters. It cannot be recovered; if you forget it, reinstall the extension."
+  },
+  "confirmPasswordLabel": {
+    "message": "Confirm password"
+  },
+  "passwordMismatch": {
+    "message": "The passwords do not match."
+  },
+  "passwordTooShort": {
+    "message": "Use at least 8 characters."
+  },
+  "createButton": {
+    "message": "Create password"
+  },
+  "domainsTitle": {
+    "message": "Locked sites"
+  },
+  "domainsHint": {
+    "message": "Each site also locks all of its subdomains."
+  },
+  "addDomainPlaceholder": {
+    "message": "example.com"
+  },
+  "addButton": {
+    "message": "Add"
+  },
+  "removeButton": {
+    "message": "Remove"
+  },
+  "emptyDomains": {
+    "message": "No sites yet."
+  },
+  "invalidDomain": {
+    "message": "Enter a site address such as example.com."
+  },
+  "permissionDenied": {
+    "message": "Chrome did not allow access to this site, so it was not added."
+  },
+  "relatedSuggestion": {
+    "message": "Also lock $1?"
+  },
+  "idleTitle": {
+    "message": "Lock again automatically"
+  },
+  "idleMinutesLabel": {
+    "message": "Minutes without keyboard or mouse input"
+  },
+  "screenLockLabel": {
+    "message": "Lock when the screen locks"
+  },
+  "guardLabel": {
+    "message": "Ask for the password before Chrome's extensions page opens"
+  },
+  "guardHint": {
+    "message": "Removing the extension from the toolbar menu cannot be blocked. See the README."
+  },
+  "changePasswordTitle": {
+    "message": "Change password"
+  },
+  "currentPasswordLabel": {
+    "message": "Current password"
+  },
+  "newPasswordLabel": {
+    "message": "New password"
+  },
+  "saveButton": {
+    "message": "Save"
+  },
+  "saved": {
+    "message": "Saved."
+  },
+  "lockNowButton": {
+    "message": "Lock now"
+  },
+  "permissionLostTitle": {
+    "message": "Site access was removed"
+  },
+  "permissionLostBody": {
+    "message": "Locked sites stay blocked, but the lock screen cannot open for them. Grant access again."
+  },
+  "grantButton": {
+    "message": "Grant access"
+  }
 }
