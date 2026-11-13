@@ -74,6 +74,7 @@ function init(): void {
     showError('');
     try {
       const res = await send({ type: 'unlock', password: input.value, returnTo });
+      input.value = '';
       if (res.ok) {
         unlocked = true;
         // The service worker navigates this tab when the target is safe; otherwise say so.
@@ -85,11 +86,12 @@ function init(): void {
         }
         return;
       }
-      input.value = '';
       if (res.state.waitMs > 0) countdown.start(res.state.waitMs);
       else showError(t('wrongPassword'));
-      if (res.state.waitMs <= 0) input.focus();
+      // The disabled button had the focus after a click; keep keyboard users in the field.
+      input.focus();
     } catch (err) {
+      input.value = '';
       console.warn('unlock failed', err);
     } finally {
       busy = false;

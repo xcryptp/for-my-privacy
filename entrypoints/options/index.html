@@ -43,7 +43,7 @@
       <section id="view-locked" class="card" hidden>
         <form id="unlock-form" class="form" autocomplete="off">
           <label for="unlock-password" data-i18n="passwordLabel"></label>
-          <input id="unlock-password" type="password" autocomplete="current-password" required />
+          <input id="unlock-password" type="password" autocomplete="new-password" required />
           <p id="unlock-error" class="message error" role="alert"></p>
           <button id="unlock-submit" type="submit" data-i18n="unlockButton"></button>
         </form>
@@ -102,7 +102,7 @@
           <h2 id="change-title" data-i18n="changePasswordTitle"></h2>
           <form id="change-form" class="form" autocomplete="off">
             <label for="current" data-i18n="currentPasswordLabel"></label>
-            <input id="current" type="password" autocomplete="current-password" required />
+            <input id="current" type="password" autocomplete="new-password" required />
             <label for="next" class="spaced" data-i18n="newPasswordLabel"></label>
             <input id="next" type="password" autocomplete="new-password" required />
             <p id="change-error" class="message error" role="alert"></p>

@@ -11,6 +11,8 @@
   --bg: #f3f5f9;
   --surface: #ffffff;
   --border: #d3d9e4;
+  /* Form field outline: at least 3:1 against both the card and the field fill (WCAG 1.4.11). */
+  --input-border: #7a8498;
   --text: #1c2433;
   --text-muted: #4b5668;
   --accent: #2456c9;
@@ -41,6 +43,7 @@
     --bg: #12161f;
     --surface: #1b212d;
     --border: #384256;
+    --input-border: #6b7790;
     --text: #e8ecf4;
     --text-muted: #a9b3c6;
     --accent: #7fa6ff;
@@ -114,7 +117,7 @@ input[type='number'] {
   width: 100%;
   min-height: var(--tap);
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
+  border: 1px solid var(--input-border);
   border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text);
