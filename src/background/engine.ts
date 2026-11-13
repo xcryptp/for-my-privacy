@@ -193,8 +193,10 @@ async function passwordMaybeSet(): Promise<boolean> {
 export function relock(reason: 'idle' | 'screen' | 'windows' | 'manual'): Promise<void> {
   void reason;
   return ruleQueue(async () => {
-    // Tabs are listed before the rule is cleared; if that fails, the listing is retried after.
-    let tabs = await queryTabs();
+    // The sweep uses a listing taken after the rule is cleared, so a tab that opened or started
+    // loading a locked site meanwhile is included. The listing taken before is only a fallback
+    // for when the later one fails.
+    const before = await queryTabs();
     let firstError: unknown = null;
     try {
       await clearUnlocked();
@@ -203,8 +205,8 @@ export function relock(reason: 'idle' | 'screen' | 'windows' | 'manual'): Promis
     }
     if (await passwordMaybeSet()) {
       const settings = await settingsOrFallback();
-      tabs ??= await queryTabs();
-      await sweepTabs(tabs ?? [], settings);
+      const tabs = (await queryTabs()) ?? before ?? [];
+      await sweepTabs(tabs, settings);
     }
     if (firstError) throw firstError;
   });
@@ -324,16 +326,30 @@ export async function onIdleStateChanged(state: string): Promise<void> {
     }
     if (lockOnScreenLock) return relock('screen');
     // While the screen is locked Chrome reports `locked`, never `idle`, so time it here.
-    await browser.storage.session.set({ [SCREEN_LOCKED_AT_KEY]: Date.now() });
+    // If the time cannot be stored, the lock could not be timed: relock now instead.
+    try {
+      await browser.storage.session.set({ [SCREEN_LOCKED_AT_KEY]: Date.now() });
+    } catch (err) {
+      console.warn('idle: could not store the screen lock time, relocking', err);
+      return relock('screen');
+    }
     return;
   }
   if (state === 'active') {
-    const stored = await browser.storage.session.get(SCREEN_LOCKED_AT_KEY);
-    const lockedAt = stored[SCREEN_LOCKED_AT_KEY];
+    let lockedAt: unknown;
+    try {
+      lockedAt = (await browser.storage.session.get(SCREEN_LOCKED_AT_KEY))[SCREEN_LOCKED_AT_KEY];
+    } catch (err) {
+      // The stored time cannot be read, so a long screen lock cannot be ruled out.
+      console.warn('idle: could not read the screen lock time, relocking', err);
+      return relock('idle');
+    }
     if (typeof lockedAt !== 'number') return;
-    await browser.storage.session.remove(SCREEN_LOCKED_AT_KEY);
     const { idleMinutes } = await settingsOrFallback();
-    if (Date.now() - lockedAt > idleMinutes * 60_000) return relock('idle');
+    const expired = Date.now() - lockedAt > idleMinutes * 60_000;
+    // Decide first, then clear; a failed clear must not skip the relock.
+    await browser.storage.session.remove(SCREEN_LOCKED_AT_KEY).catch((err) => console.warn('idle: clear failed', err));
+    if (expired) return relock('idle');
   }
 }
 

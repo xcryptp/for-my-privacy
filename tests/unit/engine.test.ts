@@ -388,6 +388,28 @@ describe('relock', () => {
     expect(remove.mock.calls.map((c) => c[0])).toEqual([1, 3, 4]);
   });
 
+  it('sweeps a tab that appeared while the unlock rule was being cleared', async () => {
+    await seedUnlocked(['example.test']);
+    const { remove } = stubTabs(TABS);
+    // The listing before the clear misses tab 3; it opens before the clear finishes.
+    vi.mocked(browser.tabs.query).mockImplementationOnce((async () => [TABS[0]!, TABS[1]!]) as never);
+    await relock('idle');
+    expect(remove.mock.calls.map((c) => c[0])).toEqual([1, 3, 4]);
+  });
+
+  it('falls back to the earlier tab listing when the one after clearing fails', async () => {
+    await seedUnlocked(['example.test']);
+    const { remove } = stubTabs(TABS);
+    vi.mocked(browser.tabs.query)
+      .mockImplementationOnce((async () => TABS) as never)
+      .mockImplementationOnce((async () => {
+        throw new Error('tabs busy');
+      }) as never);
+    await relock('idle');
+    expect(chrome.state.session).toEqual([]);
+    expect(remove.mock.calls.map((c) => c[0])).toEqual([1, 3, 4]);
+  });
+
   it('sweeps tabs even when clearing the unlock rule fails, then reports the error', async () => {
     await seedUnlocked(['example.test']);
     const { remove } = stubTabs(TABS);
@@ -510,6 +532,38 @@ describe('background listeners', () => {
     await seedUnlocked(['example.test']);
     await fire('active');
     expect(chrome.state.session).not.toEqual([]);
+  });
+
+  it('screen-lock timing fails closed when storage.session fails', async () => {
+    const session = browser.storage.session;
+    const boom = (async () => {
+      throw new Error('session storage down');
+    }) as never;
+    await seedUnlocked(['example.test']);
+    await saveSettings({ lockOnScreenLock: false, idleMinutes: 5 });
+
+    // `locked`: the time cannot be stored → relock now.
+    const set = vi.spyOn(session, 'set').mockImplementationOnce(boom);
+    await onIdleStateChanged('locked');
+    expect(set).toHaveBeenCalled();
+    expect(chrome.state.session).toEqual([]);
+
+    // `active`: the stored time cannot be read → relock.
+    await seedUnlocked(['example.test']);
+    vi.spyOn(session, 'get').mockImplementationOnce(boom);
+    await onIdleStateChanged('active');
+    expect(chrome.state.session).toEqual([]);
+
+    // `active` after a long lock: a failing clear does not skip the relock.
+    await seedUnlocked(['example.test']);
+    const t0 = 50_000_000;
+    const now = vi.spyOn(Date, 'now').mockReturnValue(t0);
+    await onIdleStateChanged('locked');
+    expect(chrome.state.session).not.toEqual([]);
+    now.mockReturnValue(t0 + 6 * 60_000);
+    vi.spyOn(session, 'remove').mockImplementationOnce(boom);
+    await onIdleStateChanged('active');
+    expect(chrome.state.session).toEqual([]);
   });
 
   it('sweeps open extensions pages at worker start and browser start while locked', async () => {
