@@ -2,14 +2,29 @@ import type { Page, Worker } from '@playwright/test';
 import { test, expect } from './fixtures';
 
 type Api = {
-  syncBlockRules: (domains: string[]) => Promise<void>;
   setUnlocked: (domains: string[]) => Promise<void>;
   clearUnlocked: () => Promise<void>;
   isUnlocked: () => Promise<boolean>;
+  handleMessage: (req: unknown, sender: unknown) => Promise<{ state: { hasPassword: boolean } }>;
+  saveSettings: (patch: unknown) => Promise<unknown>;
+  applySettings: (settings: unknown) => Promise<void>;
+  getSettings: () => Promise<unknown>;
 };
 
+// The worker owns the rules (it re-syncs them on start and on settings changes, and blocks
+// nothing before a password exists), so tests lock domains the way the options page does:
+// a password, then the domain list. Setup unlocks, so the helper locks again at the end.
 const sync = (sw: Worker, domains: string[]) =>
-  sw.evaluate((d) => (globalThis as unknown as { __fmp: Api }).__fmp.syncBlockRules(d), domains);
+  sw.evaluate(async (d) => {
+    const api = (globalThis as unknown as { __fmp: Api }).__fmp;
+    const { state } = await api.handleMessage({ type: 'getState' }, {});
+    if (!state.hasPassword) await api.handleMessage({ type: 'setup', password: 'correct horse' }, {});
+    await api.saveSettings({ domains: d });
+    await api.applySettings(await api.getSettings());
+    // lockNow goes through the worker's rule queue, so a pending settings resync cannot
+    // re-create the unlock rule afterwards (a bare clearUnlocked could race with it).
+    await api.handleMessage({ type: 'lockNow' }, {});
+  }, domains);
 const unlock = (sw: Worker, domains: string[]) =>
   sw.evaluate((d) => (globalThis as unknown as { __fmp: Api }).__fmp.setUnlocked(d), domains);
 const clearUnlock = (sw: Worker) =>
