@@ -1,5 +1,5 @@
 import type { Page, Worker } from '@playwright/test';
-import { test, expect } from './fixtures';
+import { test, expect, stays, visit } from './fixtures';
 
 type Api = {
   handleMessage: (req: unknown, sender: unknown) => Promise<unknown>;
@@ -14,6 +14,14 @@ const PW = 'correct horse';
 declare const chrome: typeof import('wxt/browser').browser;
 const msg = (sw: Worker, key: string, subs?: string | string[]) =>
   sw.evaluate(([k, s]) => chrome.i18n.getMessage(k as never, s), [key, subs] as const) as Promise<string>;
+
+/** The Finish tip with the Lock now shortcut Chrome has (or the text for none). */
+async function doneTip(sw: Worker): Promise<string> {
+  const keys = await sw.evaluate(
+    async () => (await chrome.commands.getAll()).find((c) => c.name === 'lock-now')?.shortcut || '',
+  );
+  return keys ? msg(sw, 'onboardingDoneTip', keys) : msg(sw, 'onboardingDoneTipNoShortcut');
+}
 
 /** Controls and expected texts of the options page, in the browser's language. */
 async function optionsUi(page: Page, sw: Worker) {
@@ -176,14 +184,14 @@ test('onboarding happy path: four steps end on the settings, and the chosen site
 
   // Settings view with the tip; the site is listed and the idle value kept.
   await expect(ui.lockNow).toBeVisible();
-  await expect(ui.tip).toHaveText(await ui.text('onboardingDoneTip'));
+  await expect(ui.tip).toHaveText(await doneTip(sw));
   await expect(ui.list.getByText('example.test', { exact: true })).toBeVisible();
   await (await ui.menuLink('menuAutolock')).click();
   await expect(ui.idle).toHaveValue('7');
 
   // The settings being open does not unlock the site.
   const site = await context.newPage();
-  await site.goto(origin('www.example.test')).catch(() => {});
+  await visit(site, origin('www.example.test'));
   await expect.poll(() => site.url()).toMatch(new RegExp(`^chrome-extension://${extensionId}/lock\\.html#[ut]=`));
 });
 
@@ -313,7 +321,7 @@ test('the settings unlock keeps the sites locked: unlock, add a site, a new tab 
   await expect(ui.list.getByText('example.test', { exact: true })).toBeVisible();
 
   const site = await context.newPage();
-  await site.goto(origin('example.test')).catch(() => {});
+  await visit(site, origin('example.test'));
   await expect.poll(() => site.url()).toMatch(new RegExp(`^chrome-extension://${extensionId}/lock\\.html#[ut]=`));
 });
 
@@ -330,7 +338,7 @@ test('unlocking the sites on the lock page does not open the settings', async ({
   await expect(ui.unlock).toBeVisible();
 
   const site = await context.newPage();
-  await site.goto(origin('example.test')).catch(() => {});
+  await visit(site, origin('example.test'));
   await expect.poll(() => site.url()).toMatch(/lock\.html#[ut]=/);
   await site.locator('#password').fill(PW);
   await site.locator('#submit').click();
@@ -365,7 +373,7 @@ test('adding a site lists it with its wildcard forms and, after Lock now, its su
   await expect(ui.unlock).toBeVisible();
 
   const site = await context.newPage();
-  await site.goto(origin('www.example.test')).catch(() => {});
+  await visit(site, origin('www.example.test'));
   await expect.poll(() => site.url()).toMatch(new RegExp(`^chrome-extension://${extensionId}/lock\\.html#[ut]=`));
 });
 
@@ -414,7 +422,7 @@ test('a pasted URL with a subdomain is stored as its registrable domain and lock
   await expect(ui.unlock).toBeVisible();
 
   const site = await context.newPage();
-  await site.goto(origin('a.b.example.test')).catch(() => {});
+  await visit(site, origin('a.b.example.test'));
   await expect.poll(() => site.url()).toMatch(new RegExp(`^chrome-extension://${extensionId}/lock\\.html#[ut]=`));
 });
 
@@ -567,19 +575,31 @@ test('a slow settings render that finishes after Lock now writes nothing into th
   await page.evaluate(() => {
     const local = (globalThis as unknown as { chrome: typeof import('wxt/browser').browser }).chrome.storage.local;
     const original = local.get.bind(local) as (keys: unknown) => Promise<unknown>;
+    const counts = { slow: 0, done: 0 };
+    (globalThis as unknown as { __slowReads: typeof counts }).__slowReads = counts;
     local.get = (async (keys: unknown) => {
       const result = await original(keys);
-      if (keys === 'settings') await new Promise((resolve) => setTimeout(resolve, 1500));
+      if (keys === 'settings') {
+        counts.slow++;
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        counts.done++;
+      }
       return result;
     }) as typeof local.get;
   });
+  const slowReads = () =>
+    page.evaluate(() => (globalThis as unknown as { __slowReads: { slow: number; done: number } }).__slowReads);
   // Another options tab changing the settings starts a refresh here.
   await sw.evaluate(() =>
     (globalThis as unknown as { __fmp: Api }).__fmp.saveSettings({ domains: ['example.test', 'other.test'] }),
   );
   await ui.lockNow.click();
   await expect(ui.unlock).toBeVisible();
-  await page.waitForTimeout(2500);
+  // Every slow read that started has finished (and its render had its chance to write).
+  await expect.poll(async () => {
+    const { slow, done } = await slowReads();
+    return slow > 0 && slow === done;
+  }, { timeout: 5_000 }).toBe(true);
   await expect(ui.list.locator('li')).toHaveCount(0);
   await expect(ui.unlock).toBeVisible();
   await expect(ui.lockNow).toBeHidden();
@@ -680,7 +700,7 @@ test('a site typed but not added is added when Next is pressed, and the button n
   await expect(ui.progress).toHaveText('4/4');
   await ui.finish.click();
   await expect(ui.list.getByText('example.test', { exact: true })).toBeVisible();
-  await expect(ui.tip).toHaveText(await ui.text('onboardingDoneTip'));
+  await expect(ui.tip).toHaveText(await doneTip(sw));
 });
 
 test('a typed text that is not a site keeps the person on step 3 with the message', async ({ context, sw, extensionId }) => {
@@ -862,8 +882,8 @@ test('after Remove the focus goes to the next row, then the field when the list 
   await expect(ui.list.locator('li')).toHaveCount(1);
   await expect(page.getByRole('button', { name: `${await ui.text('removeButton')}: other.test` })).toBeFocused();
   // The redraw after the storage change keeps the focus there.
-  await page.waitForTimeout(500);
-  await expect(page.getByRole('button', { name: `${await ui.text('removeButton')}: other.test` })).toBeFocused();
+  const removeOther = page.getByRole('button', { name: `${await ui.text('removeButton')}: other.test` });
+  await stays(() => removeOther.evaluate((el) => el === document.activeElement).catch(() => false), true, 500);
   await page.getByRole('button', { name: `${await ui.text('removeButton')}: other.test` }).click();
   await expect(ui.list.locator('li')).toHaveCount(0);
   await expect(ui.domainField).toBeFocused();
@@ -987,7 +1007,7 @@ test('changing the unlock choice locks the sites again while the settings stay o
     ]),
   );
   const open = await context.newPage();
-  await open.goto(origin('example.test')).catch(() => {});
+  await visit(open, origin('example.test'));
   await expect(open).toHaveTitle('ORIGINAL example.test');
 
   await (await ui.menuLink('menuSecurity')).click();
@@ -998,7 +1018,7 @@ test('changing the unlock choice locks the sites again while the settings stay o
   await expect(await ui.heading('unlockScopeTitle')).toBeVisible();
   // ... and the sites are locked again.
   const again = await context.newPage();
-  await again.goto(origin('example.test')).catch(() => {});
+  await visit(again, origin('example.test'));
   await expect.poll(() => again.url()).toMatch(new RegExp(`^chrome-extension://${extensionId}/lock\\.html#[ut]=`));
 });
 

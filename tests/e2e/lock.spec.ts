@@ -1,5 +1,5 @@
 import type { Page, Worker } from '@playwright/test';
-import { test, expect } from './fixtures';
+import { test, expect, visit } from './fixtures';
 
 type Api = {
   handleMessage: (req: unknown, sender: unknown) => Promise<unknown>;
@@ -113,7 +113,7 @@ test('the right password returns to the original URL (Enter submits)', async ({
   await lockDomains(sw, ['example.test']);
   const page = await context.newPage();
   const target = origin('www.example.test') + '/p?q=1#h';
-  await page.goto(target).catch(() => {});
+  await visit(page, target);
   await expect.poll(() => page.url()).toMatch(lockPageUrl(extensionId));
   const ui = await lockUi(page, sw);
   await ui.field.fill(PW);
@@ -137,7 +137,7 @@ test('unlocking in one lock tab returns it; another redirect-created lock tab re
     [first, firstTarget],
     [second, secondTarget],
   ] as const) {
-    await page.goto(target).catch(() => {});
+    await visit(page, target);
     await expect.poll(() => page.url()).toMatch(lockPageUrl(extensionId));
   }
   const ui = await lockUi(second, sw);
@@ -155,10 +155,13 @@ test('unlocking in one lock tab returns it; another redirect-created lock tab re
 test('the extensions page returns after unlocking', async ({ context, sw, extensionId }) => {
   await lockDomains(sw, ['example.test']);
   const page = await context.newPage();
-  await page.goto('chrome://extensions/').catch(() => {});
+  await visit(page, 'chrome://extensions/');
   await expect.poll(() => page.url()).toMatch(lockPageUrl(extensionId));
   const ui = await lockUi(page, sw);
   await expect(page.getByText(await ui.text('lockSubtitle', 'chrome://extensions'))).toBeVisible();
+  // It says what is locked: the extensions page, not "this site".
+  await expect(page.getByRole('heading', { name: await ui.text('lockTitleExtensions') })).toBeVisible();
+  await expect(page).toHaveTitle(await ui.text('lockTitleExtensions'));
   await ui.field.fill(PW);
   await ui.button.click();
   await expect.poll(() => page.url()).toMatch(/^chrome:\/\/extensions/);
@@ -302,7 +305,7 @@ test('unlock scope all opens every listed site together; scope site opens only t
   // The guard replaces a tab that opens a locked site without access: watch every new page.
   const before = new Set(context.pages());
   const apart = await context.newPage();
-  await apart.goto(origin('noperm.test') + '/').catch(() => {});
+  await visit(apart, origin('noperm.test') + '/');
   await expect
     .poll(() =>
       context
@@ -320,7 +323,7 @@ test("in 'site' scope the extensions lock page says it opens the extensions page
   await lockDomains(sw, ['example.test']);
   await sw.evaluate(() => (globalThis as unknown as { __fmp: Api }).__fmp.saveSettings({ unlockScope: 'site' }));
   const page = await context.newPage();
-  await page.goto('chrome://extensions/').catch(() => {});
+  await visit(page, 'chrome://extensions/');
   await expect.poll(() => page.url()).toMatch(lockPageUrl(extensionId));
   const ui = await lockUi(page, sw);
   await expect(page.getByText(await ui.text('unlockHintExtensions'), { exact: true })).toBeVisible();
@@ -332,8 +335,32 @@ test("in 'site' scope the extensions lock page says it opens the extensions page
 test("in 'all' scope the extensions lock page keeps the general line", async ({ context, sw, extensionId }) => {
   await lockDomains(sw, ['example.test']);
   const page = await context.newPage();
-  await page.goto('chrome://extensions/').catch(() => {});
+  await visit(page, 'chrome://extensions/');
   await expect.poll(() => page.url()).toMatch(lockPageUrl(extensionId));
   const ui = await lockUi(page, sw);
   await expect(page.getByText(await ui.text('unlockHintAll'), { exact: true })).toBeVisible();
+});
+
+test("in 'site' scope a lock page with nothing to open says so instead of \"Unlocked\"", async ({
+  context,
+  sw,
+  extensionId,
+}) => {
+  await lockDomains(sw, ['example.test']);
+  await sw.evaluate(async () => {
+    const api = (globalThis as unknown as { __fmp: Api }).__fmp;
+    await api.saveSettings({ unlockScope: 'site' });
+    await api.applySettings(await api.getSettings());
+  });
+  const page = await context.newPage();
+  const ui = await openLockPage(page, sw, extensionId, 'javascript:alert(1)');
+  await ui.field.fill(PW);
+  await ui.button.click();
+  await expect(ui.status).toHaveText(await ui.text('unlockNothingToOpen'));
+  expect(page.url()).toContain('lock.html');
+  // Nothing was unlocked either.
+  const state = (await sw.evaluate(() =>
+    (globalThis as unknown as { __fmp: Api }).__fmp.handleMessage({ type: 'getState' }, {}),
+  )) as { state: { unlocked: boolean } };
+  expect(state.state.unlocked).toBe(false);
 });

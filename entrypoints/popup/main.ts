@@ -1,17 +1,19 @@
 import { browser } from 'wxt/browser';
 import { applyI18n, t } from '../../src/lib/i18n';
 import { send } from '../../src/lib/messages';
+import { LOCK_COMMAND, lockShortcut, shortcutOf } from '../../src/ui/shortcut';
 
-/** The command the worker listens for (`commands` in the manifest); its shortcut is shown when one is set. */
-export const LOCK_COMMAND = 'lock-now';
+export { LOCK_COMMAND, shortcutOf };
+
 
 /** How long "Locked" stays on screen, readable, before the popup closes. */
 const CLOSE_MS = 2000;
 
-/** The shortcut text of a command list: the one set for Lock now, or undefined when none is set. */
-export function shortcutOf(commands: readonly { name?: string; shortcut?: string }[]): string | undefined {
-  const found = commands.find((command) => command.name === LOCK_COMMAND)?.shortcut;
-  return found ? found : undefined;
+
+/** The line under the title: whether every site is locked now (nothing before the first run). */
+export function stateLineKey(state: { hasPassword: boolean; unlocked: boolean }): 'popupAllLocked' | 'popupSomeUnlocked' | undefined {
+  if (!state.hasPassword) return undefined;
+  return state.unlocked ? 'popupSomeUnlocked' : 'popupAllLocked';
 }
 
 function byId<T extends HTMLElement>(id: string): T {
@@ -25,6 +27,7 @@ function init(): void {
   const settings = byId<HTMLButtonElement>('settings');
   const status = byId('status');
   const shortcut = byId('shortcut');
+  const stateLine = byId('state');
 
   applyI18n();
   document.documentElement.lang = browser.i18n.getUILanguage();
@@ -49,6 +52,7 @@ function init(): void {
         if (res.ok) {
           status.classList.remove('note');
           status.textContent = t('popupLocked');
+          stateLine.textContent = t('popupAllLocked');
           setTimeout(() => window.close(), CLOSE_MS);
           return;
         }
@@ -66,6 +70,11 @@ function init(): void {
   // Before the first run is finished there is nothing to lock: point at the settings instead.
   send({ type: 'getState' })
     .then((res) => {
+      const line = stateLineKey(res.state);
+      if (line) {
+        stateLine.textContent = t(line);
+        stateLine.hidden = false;
+      }
       if (res.state.hasPassword) return;
       lock.disabled = true;
       status.classList.add('note');
@@ -75,15 +84,11 @@ function init(): void {
     })
     .catch((err) => console.warn('getState failed', err));
 
-  browser.commands
-    .getAll()
-    .then((commands) => {
-      const keys = shortcutOf(commands);
-      if (!keys) return;
-      shortcut.textContent = t('popupShortcut', keys);
-      shortcut.hidden = false;
-    })
-    .catch((err) => console.warn('commands.getAll failed', err));
+  void lockShortcut().then((keys) => {
+    if (!keys) return;
+    shortcut.textContent = t('popupShortcut', keys);
+    shortcut.hidden = false;
+  });
 }
 
 if (typeof document !== 'undefined') init();

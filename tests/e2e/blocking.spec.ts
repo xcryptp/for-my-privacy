@@ -1,5 +1,5 @@
 import type { BrowserContext, Page, Worker } from '@playwright/test';
-import { test, expect, hasLockPageFor, lockTargetOf } from './fixtures';
+import { test, expect, hasLockPageFor, lockTargetOf, stays, visit } from './fixtures';
 
 type Api = {
   setUnlocked: (domains: string[]) => Promise<void>;
@@ -34,10 +34,6 @@ const isUnlocked = (sw: Worker) =>
   sw.evaluate(() => (globalThis as unknown as { __fmp: Api }).__fmp.isUnlocked());
 
 // A redirect to the extension page can surface as a rejected goto; the final URL is what counts.
-async function visit(page: Page, url: string) {
-  await page.goto(url).catch(() => {});
-}
-
 test('B1: the domain and its subdomains land on the lock page, look-alikes do not', async ({
   context,
   sw,
@@ -127,18 +123,21 @@ test('B9a: a domain without host permission is blocked, then its tab ends on the
   const failed: { url: string; error: string | undefined }[] = [];
   page.on('requestfailed', (r) => failed.push({ url: r.url(), error: r.failure()?.errorText }));
   const url = origin('noperm.test') + '/';
-  await page.goto(url).catch(() => {});
+  await visit(page, url);
   // The block rule fails the navigation itself (no redirect without host access).
   await expect.poll(() => failed.find((f) => f.url === url)?.error).toBe('net::ERR_BLOCKED_BY_CLIENT');
   // Chrome's blocked page commits under the site's URL; the tab guard then swaps the tab for
   // the lock page (a `#t=` token page). The site's own page is never the final state.
   await expect.poll(() => hasLockPageFor(context, sw, extensionId, url)).toBe(true);
-  await new Promise((r) => setTimeout(r, 500));
-  for (const p of context.pages()) {
-    if (p.isClosed()) continue;
-    expect(await p.title().catch(() => ''), p.url()).not.toBe('ORIGINAL noperm.test');
-    expect(await p.locator('body').textContent().catch(() => ''), p.url()).not.toContain('ORIGINAL-PAGE');
-  }
+  // And it stays that way: no page shows the site's content afterwards.
+  await stays(async () => {
+    for (const p of context.pages()) {
+      if (p.isClosed()) continue;
+      if ((await p.title().catch(() => '')) === 'ORIGINAL noperm.test') return p.url();
+      if ((await p.locator('body').textContent().catch(() => ''))?.includes('ORIGINAL-PAGE')) return p.url();
+    }
+    return null;
+  }, null);
 });
 
 test('B9b: an iframe of a locked domain does not load, even inside an unlocked page', async ({
@@ -201,13 +200,14 @@ async function expectTypedPageLocked(context: BrowserContext, sw: Worker, extens
   // The relock sent the site's tab to the lock page; close it so only the new tab can show one.
   for (const p of context.pages()) if (p.url().startsWith(`chrome-extension://${extensionId}/lock.html`)) await p.close();
   const typed = await context.newPage();
-  await typed.goto(url).catch(() => {});
+  await visit(typed, url);
   await expect.soft.poll(() => hasLockPageFor(context, sw, extensionId, url), { timeout: 5_000 }).toBe(true);
-  await new Promise((r) => setTimeout(r, 500));
-  for (const p of context.pages()) {
-    if (p.isClosed()) continue;
-    expect.soft(await p.title().catch(() => ''), p.url()).not.toBe(title);
-  }
+  await stays(async () => {
+    for (const p of context.pages()) {
+      if (!p.isClosed() && (await p.title().catch(() => '')) === title) return p.url();
+    }
+    return null;
+  }, null);
 }
 
 const lockNow = (sw: Worker) =>

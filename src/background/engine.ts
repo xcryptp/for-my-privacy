@@ -21,7 +21,14 @@ import {
   TOKEN_PATTERN,
   type UnlockRule,
 } from '../lib/rules';
-import { DEFAULT_SETTINGS, getAuth, getSettings as readSettings, saveAuth, type Settings } from '../lib/settings';
+import {
+  DEFAULT_SETTINGS,
+  getAuth,
+  getSettings as readSettings,
+  parseSettings,
+  saveAuth,
+  type Settings,
+} from '../lib/settings';
 
 export { isExtensionsPage, safeReturnTo };
 
@@ -33,9 +40,11 @@ const SCREEN_LOCKED_AT_KEY = 'screenLockedAt';
 // request), so a relock recreates it even when it has moved on to another site.
 const SHOWN_LOCKED_KEY = 'shownLockedTabs';
 // storage.session key: IDs of tabs whose page embedded a frame of a listed domain since the last
-// relock. The host page itself is not private, so a relock reloads it (keeping its history) and
-// the reload's frame request meets the block rule. A tab that then moves on to another page
-// keeps the embedding page in its back/forward cache, so it moves to the shown-locked set.
+// relock. A relock reloads only the tabs that hold such a frame right now (from
+// webNavigation.getAllFrames; the host page itself is not private, so it keeps its history and
+// the reload's frame request meets the block rule). This record is the fallback for a tab whose
+// frames cannot be listed. A host that moved on is left alone: changing the rules on relock
+// flushes the back/forward cache, so Back reloads the embedding page and its frame is blocked.
 const FRAME_HOSTS_KEY = 'frameHostTabs';
 // storage.local key: origins of listed domains that tabs or frames ever showed (any subdomain or
 // port). Kept apart from the tab IDs (a closed tab's site keeps its service worker) and across
@@ -50,14 +59,18 @@ const SETTINGS_UNLOCKED_KEY = 'settingsUnlocked';
 const EXTENSIONS_UNLOCKED_KEY = 'extensionsUnlocked';
 // storage.session key prefix: one lock page target per token (`lockTarget:<token>`).
 const TOKEN_KEY_PREFIX = 'lockTarget:';
+// storage.local key: the targets of the lock tabs the service worker opened, by token. Chrome
+// restores a lock tab after a restart with the same `#t=` URL but a new tab ID (and an update
+// empties storage.session), so the worker binds such a token to its new tab again. Claimed
+// tokens stay session-only. Entries of lock tabs that are gone are dropped on the next relock.
+const ENGINE_TARGETS_KEY = 'engineLockTargets';
+// A stored target this young is kept even when no open tab carries it yet (its tab is opening).
+const ENGINE_TARGET_GRACE_MS = 60_000;
 // Claimed tokens kept per tab (a lock page that reloads claims again); older ones are dropped.
 const CLAIMED_TOKENS_PER_TAB = 3;
 // How long a frame-host reload may take to commit before the tab is recreated instead (a
 // beforeunload or form-resubmission dialog keeps the old document and its frame).
 const RELOAD_CONFIRM_MS = 3_000;
-// A locked frame that commits again in the same tab within this time, from a new host
-// document, survived the removal and the reload: the host tab gets the lock page.
-const FRAME_GUARD_WINDOW_MS = 10_000;
 // Longest wait for the site-data removal before a relock moves on (the removal keeps running).
 const SITE_DATA_TIMEOUT_MS = 10_000;
 // Wait before trying again to close a tab Chrome refuses to edit (e.g. while a tab is dragged).
@@ -72,10 +85,35 @@ const shownLocked = new Set<number>();
 const frameHosts = new Set<number>();
 const shownOrigins = new Set<string>();
 
+// The stored settings as this worker last heard them while its storage.onChanged listener is
+// registered (from that listener, or from a read no change overtook). Only a prefilter that
+// lets ordinary frames of other sites skip the queue; null when unknown.
+let watched: Settings | null = null;
+let settingsVersion = 0;
+
 async function getSettings(): Promise<Settings> {
+  const version = settingsVersion;
   const settings = await readSettings();
   lastSettings = settings;
+  if (version === settingsVersion) watched = settings;
   return settings;
+}
+
+function watchedSettings(): Settings | null {
+  return browser.storage.onChanged.hasListener(onStorageChanged) ? watched : null;
+}
+
+/**
+ * storage.onChanged (registered at the top level of the background entrypoint): a settings
+ * write re-applies the settings, knowing what the list was before (the write may be what woke
+ * this worker, whose start already applied the new list).
+ */
+export function onStorageChanged(changes: Record<string, { oldValue?: unknown; newValue?: unknown }>, area: string): void {
+  if (area !== 'local' || !('settings' in changes)) return;
+  const change = changes.settings!;
+  settingsVersion++;
+  watched = parseSettings(change.newValue);
+  resync(change.oldValue ?? null).catch((err) => console.error('for-my-privacy: storage.onChanged failed', err));
 }
 
 /**
@@ -240,7 +278,12 @@ async function checkPassword(password: string): Promise<Check> {
 // password) may already be open in tabs and frames, which are swept then.
 let appliedLocked: Set<string> | null = null;
 
-async function applyNow(settings: Settings): Promise<void> {
+/**
+ * Applies `settings`; call inside ruleQueue. `previous`: the settings before the write that led
+ * here, when known (a write can wake the worker, whose start already applied the new list).
+ */
+async function applyNow(settings: Settings, previous?: Settings): Promise<Followup> {
+  lastSettings = settings;
   const auth = await getAuth();
   // Nothing is blocked before a password exists (there would be no way to unlock).
   await syncBlockRules(auth.password ? settings.domains : []);
@@ -252,11 +295,11 @@ async function applyNow(settings: Settings): Promise<void> {
     if (unlock.scope !== settings.unlockScope) {
       // The unlock scope changed while unlocked: fail closed, the sites lock again. The
       // settings stay open (the owner is in the settings page changing the scope).
-      await relockNow({ keepSettings: true });
+      const followup = await relockNow({ keepSettings: true });
       appliedLocked = new Set(auth.password ? settings.domains : []);
       await browser.idle.setDetectionInterval(Math.max(MIN_IDLE_SECONDS, settings.idleMinutes * 60));
       await listedShownOrigins(settings.domains, true);
-      return;
+      return followup;
     } else if (settings.unlockScope === 'all') {
       await setUnlocked(settings.domains, 'all');
     } else {
@@ -271,52 +314,73 @@ async function applyNow(settings: Settings): Promise<void> {
   await listedShownOrigins(settings.domains, true);
   const open = openDomains(await unlockOrLocked(), settings);
   const lockedNow = new Set(auth.password ? settings.domains.filter((d) => !open.includes(d)) : []);
-  const newly = appliedLocked === null ? [] : [...lockedNow].filter((d) => !appliedLocked!.has(d));
+  // What was locked before: this worker's record and, when known, the list before the write
+  // (the smaller of the two, so a sweep is never skipped).
+  let before: Set<string> | null = appliedLocked;
+  if (previous !== undefined) {
+    const prev = new Set(auth.password ? previous.domains.filter((d) => !open.includes(d)) : []);
+    before = before === null ? prev : new Set([...before].filter((d) => prev.has(d)));
+  }
+  const newly = before === null ? [] : [...lockedNow].filter((d) => !before.has(d));
   appliedLocked = lockedNow;
-  if (newly.length > 0) await sweepNewlyLocked(newly);
+  if (newly.length > 0) return sweepNewlyLocked(newly);
+  return NO_FOLLOWUP;
 }
 
 /**
  * Domains that just became locked: their open tabs get the lock page, their service workers
- * and caches are removed, and tabs that show them in a frame are reloaded after that.
+ * and caches are removed, and tabs that show them in a frame are reloaded after that (outside
+ * the queue). Call inside ruleQueue.
  */
-async function sweepNewlyLocked(domains: string[]): Promise<void> {
+async function sweepNewlyLocked(domains: string[]): Promise<Followup> {
   const tabs = (await queryTabs()) ?? [];
-  const frames = await lockedFrames(tabs, domains, []);
+  const { found: frames } = await lockedFrames(tabs, domains, []);
   const origins = [...frames.values()].flat();
   const tabOrigins = tabs.map((t) => lockedTarget(t.url, domains) ?? '');
   const removed = removeSiteData(siteDataOrigins(domains, [...origins, ...tabOrigins]));
   // Committed pages only: the rules are already synced, so a navigation still pending meets
   // the redirect (replacing that tab now would only race it).
   const relocked = new Set(tabs.filter((t) => lockedTarget(t.url, domains) !== null));
-  const reloads = removed.then(() =>
-    reloadAll(tabs.filter((t) => t.id !== undefined && frames.has(t.id) && !relocked.has(t))),
-  );
+  const reloads = planReloads(tabs.filter((t) => t.id !== undefined && frames.has(t.id) && !relocked.has(t)));
   for (const tab of relocked) {
     const target = lockedTarget(tab.url, domains);
     if (target) await replaceWithLockPage(tab, target);
   }
-  await reloads;
+  return followupOf(removed.then(reloads));
 }
 
 /** Syncs the block rules, refreshes the unlock rule when unlocked and sets the idle interval. */
 export function applySettings(settings: Settings): Promise<void> {
-  return ruleQueue(() => applyNow(settings));
+  return runQueued(() => applyNow(settings));
 }
 
-/** applySettings with the settings read when its turn comes (for event listeners). */
-export function resync(): Promise<void> {
-  return ruleQueue(async () => applyNow(await getSettings()));
+/**
+ * applySettings with the settings read when its turn comes (for event listeners). `previous`:
+ * the stored settings before the change that led here, when the event says (storage.onChanged).
+ */
+export function resync(previous?: unknown): Promise<void> {
+  const before = previous === undefined ? undefined : parseSettings(previous);
+  return runQueued(async () => applyNow(await getSettings(), before));
 }
 
 const VIEW_SOURCE = 'view-source:';
 
+/**
+ * The http(s) page `url` shows, after any view-source: prefix. A `blob:` document belongs to the
+ * origin that made it (a file a site opened in a tab of its own), so it stands for that origin's
+ * front page: `inner` is the origin then, never the blob URL. Null for anything else.
+ */
 function parseHttp(url: string | undefined): { inner: string; parsed: URL } | null {
   if (!url) return null;
-  const inner = url.startsWith(VIEW_SOURCE) ? url.slice(VIEW_SOURCE.length) : url;
+  let inner = url.startsWith(VIEW_SOURCE) ? url.slice(VIEW_SOURCE.length) : url;
   let parsed: URL;
   try {
     parsed = new URL(inner);
+    if (parsed.protocol === 'blob:') {
+      // An opaque origin ("null") does not parse and is no site.
+      parsed = new URL(parsed.origin);
+      inner = parsed.href;
+    }
   } catch {
     return null;
   }
@@ -324,9 +388,17 @@ function parseHttp(url: string | undefined): { inner: string; parsed: URL } | nu
   return { inner, parsed };
 }
 
+/** Matches the URLs parseHttp may accept, without parsing (http(s), blob: of one, view-source:). */
+const HTTP_LIKE = /^(view-source:)?(blob:)?https?:/i;
+
+/** An empty top-level document another tab can write into (window.open('about:blank')). */
+function isBlankDocument(url: string | undefined): boolean {
+  return !!url && (url.startsWith('about:blank') || url.startsWith('about:srcdoc'));
+}
+
 /**
- * `url` (without a view-source: prefix) when it is an http(s) page on one of `domains` and on
- * none of the `open` ones (the unlock rule lets those through), else null.
+ * `url` (without a view-source: prefix; a blob: URL as its origin) when it is an http(s) page on
+ * one of `domains` and on none of the `open` ones (the unlock rule lets those through), else null.
  */
 function lockedTarget(url: string | undefined, domains: string[], open: string[] = []): string | null {
   const p = parseHttp(url);
@@ -558,6 +630,73 @@ interface TokenRecord {
 // the bindings still waiting for their new tab's ID.
 const tokenMemory = new Map<string, TokenRecord>();
 const pendingBindings = new Map<string, Promise<void>>();
+// Tokens whose storage.session write failed: only this worker's copy holds them.
+const unsavedTokens = new Set<string>();
+// Engine tokens this worker already stored in storage.local.
+const storedEngineTokens = new Set<string>();
+// Writes to the stored engine targets, and bindings of restored lock tabs, one at a time.
+const targetsQueue = serialQueue();
+
+type StoredTarget = { url: string; at: number };
+
+/** The stored engine targets, or null when they cannot be read. Never throws. */
+async function readEngineTargets(): Promise<Record<string, StoredTarget> | null> {
+  try {
+    const raw: unknown = (await browser.storage.local.get(ENGINE_TARGETS_KEY))[ENGINE_TARGETS_KEY];
+    const out: Record<string, StoredTarget> = {};
+    if (raw && typeof raw === 'object') {
+      for (const [token, v] of Object.entries(raw as Record<string, unknown>)) {
+        const r = v as Partial<StoredTarget> | null;
+        if (TOKEN_PATTERN.test(token) && r && typeof r.url === 'string' && typeof r.at === 'number') {
+          out[token] = { url: r.url, at: r.at };
+        }
+      }
+    }
+    return out;
+  } catch (err) {
+    console.warn('lock page: could not read the stored targets', err);
+    return null;
+  }
+}
+
+/** Changes the stored engine targets in targetsQueue. Never throws. */
+function editEngineTargets(edit: (all: Record<string, StoredTarget>) => boolean): Promise<void> {
+  return targetsQueue(async () => {
+    const all = await readEngineTargets();
+    if (all === null || !edit(all)) return;
+    await browser.storage.local.set({ [ENGINE_TARGETS_KEY]: all });
+  }).catch((err) => console.warn('lock page: could not store the targets', err));
+}
+
+async function storeEngineTarget(token: string, url: string): Promise<void> {
+  if (storedEngineTokens.has(token)) return;
+  storedEngineTokens.add(token);
+  await editEngineTargets((all) => {
+    all[token] = { url, at: Date.now() };
+    return true;
+  });
+}
+
+/**
+ * Drops the stored targets that no open tab carries any more (older than a short grace, so a
+ * lock tab still opening keeps its own). Skipped when the tabs cannot be listed. Never throws.
+ */
+async function pruneEngineTargets(): Promise<void> {
+  const tabs = await queryTabs();
+  if (tabs === null) return;
+  const live = new Set(tabs.flatMap((t) => [lockPageToken(t.url), lockPageToken(t.pendingUrl)]));
+  const now = Date.now();
+  await editEngineTargets((all) => {
+    let changed = false;
+    for (const [token, target] of Object.entries(all)) {
+      if (live.has(token) || now - target.at < ENGINE_TARGET_GRACE_MS) continue;
+      delete all[token];
+      storedEngineTokens.delete(token);
+      changed = true;
+    }
+    return changed;
+  });
+}
 
 function newToken(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
@@ -568,9 +707,12 @@ async function writeToken(token: string, record: TokenRecord): Promise<void> {
   tokenMemory.set(token, record);
   try {
     await browser.storage.session.set({ [TOKEN_KEY_PREFIX + token]: record });
+    unsavedTokens.delete(token);
   } catch (err) {
     console.warn('lock page: could not store a target', err);
+    unsavedTokens.add(token);
   }
+  if (record.source === 'engine') await storeEngineTarget(token, record.url);
 }
 
 function isTokenRecord(value: unknown): value is TokenRecord {
@@ -583,25 +725,71 @@ function isTokenRecord(value: unknown): value is TokenRecord {
   );
 }
 
-/** The record of `token` once its binding is done (stored, else this worker's copy). */
+/**
+ * The record of `token` once its binding is done: stored, else this worker's copy when storage
+ * failed (the read now, or the write then).
+ */
 async function readToken(token: string): Promise<TokenRecord | null> {
   if (!TOKEN_PATTERN.test(token)) return null;
   await pendingBindings.get(token);
   try {
     const stored: unknown = (await browser.storage.session.get(TOKEN_KEY_PREFIX + token))[TOKEN_KEY_PREFIX + token];
     if (isTokenRecord(stored)) return stored;
+    if (!unsavedTokens.has(token)) return null;
   } catch (err) {
     console.warn('lock page: could not read a target', err);
   }
   return tokenMemory.get(token) ?? null;
 }
 
+/**
+ * The record of `token` as seen from tab `tabId`. A token this browser session does not know
+ * but storage.local does is a lock tab the worker opened before a restart or an update: it is
+ * bound to the first tab that carries it now (the restored one), and only that tab.
+ */
+async function readTokenFor(token: string, tabId: number | undefined): Promise<TokenRecord | null> {
+  const record = await readToken(token);
+  if (record !== null || tabId === undefined || !TOKEN_PATTERN.test(token)) return record;
+  return targetsQueue(async () => {
+    const again = await readToken(token);
+    if (again !== null) return again;
+    const stored = (await readEngineTargets())?.[token];
+    if (!stored) return null;
+    const bound: TokenRecord = { url: stored.url, tabId, source: 'engine' };
+    // Already in storage.local: only this session's record is written.
+    storedEngineTokens.add(token);
+    await writeToken(token, bound);
+    return bound;
+  });
+}
+
+/** Binds the lock tabs restored after a restart (or kept over an update) to their targets. */
+async function rebindLockTabs(tabs: Tab[]): Promise<void> {
+  for (const tab of tabs) {
+    const token = lockPageToken(tab.url) ?? lockPageToken(tab.pendingUrl);
+    if (token !== undefined && tab.id !== undefined) await readTokenFor(token, tab.id);
+  }
+}
+
 async function deleteTokens(tokens: string[]): Promise<void> {
   if (tokens.length === 0) return;
-  for (const t of tokens) tokenMemory.delete(t);
+  for (const t of tokens) {
+    tokenMemory.delete(t);
+    unsavedTokens.delete(t);
+  }
   await browser.storage.session
     .remove(tokens.map((t) => TOKEN_KEY_PREFIX + t))
     .catch((err) => console.warn('lock page: could not delete targets', err));
+  for (const t of tokens) storedEngineTokens.delete(t);
+  await editEngineTargets((all) => {
+    let changed = false;
+    for (const t of tokens) {
+      if (!(t in all)) continue;
+      delete all[t];
+      changed = true;
+    }
+    return changed;
+  });
 }
 
 /** Keeps only the newest few claimed tokens of `tabId`. Never throws. */
@@ -723,6 +911,11 @@ async function recreateTab(tab: Tab, url: string | undefined, returnTo: string):
  * waits for the binding).
  */
 async function replaceWithLockPage(tab: Tab, target: string): Promise<void> {
+  // No known target (an empty tab a locked site may have written into): a plain lock page.
+  if (target === '') {
+    await recreateTab(tab, lockPageBase(), '');
+    return;
+  }
   const token = newToken();
   let done!: () => void;
   pendingBindings.set(token, new Promise<void>((resolve) => (done = resolve)));
@@ -760,18 +953,70 @@ async function passwordMaybeSet(): Promise<boolean> {
   }
 }
 
+/**
+ * Work a ruleQueue step started and left to finish after the queue moved on (the site-data
+ * removal and the frame-host reloads), so the tab guard never waits behind it. `error` is the
+ * step's first error, reported once `wait` settled. `wait` never rejects.
+ */
+type Followup = { wait: Promise<void>; error?: unknown };
+const NO_FOLLOWUP: Followup = { wait: Promise.resolve() };
+
+/** Runs `step` in ruleQueue, then waits for its follow-up work outside the queue. */
+async function runQueued(step: () => Promise<Followup>): Promise<void> {
+  const followup = await ruleQueue(step);
+  await followup.wait;
+  if (followup.error !== undefined && followup.error !== null) throw followup.error;
+}
+
+function followupOf(work: Promise<unknown>, error?: unknown): Followup {
+  return {
+    wait: work.then(
+      () => undefined,
+      (err: unknown) => console.warn('relock: follow-up work failed', err),
+    ),
+    error,
+  };
+}
+
 // Tabs waiting for their reload to commit (resolved from webNavigation.onCommitted, outside
 // ruleQueue, so a relock holding the queue still sees it).
 const reloadWaiters = new Map<number, () => void>();
 
 /**
+ * Tabs whose host page was reloaded because of a locked frame since the last relock or unlock:
+ * 'reloading' while the reload is on its way, 'reloaded' once it committed. A locked frame that
+ * commits in a 'reloaded' tab came back although its site's data was removed and the host
+ * reloaded (its service worker survived): the second strike gives that tab the lock page.
+ */
+type GuardEntry = { phase: 'reloading' | 'reloaded' };
+const frameGuarded = new Map<number, GuardEntry>();
+// The reloads still on their way, by tab (they outlive a relock that clears frameGuarded).
+const reloadsInFlight = new Map<number, GuardEntry>();
+
+/**
+ * Marks tab `tabId` as reloading for the frame guard. Returns the entry for reloadFrameHost, or
+ * null when a reload of that tab is already on its way (the entry carries over; no second one).
+ * Call inside ruleQueue.
+ */
+function markReloading(tabId: number): GuardEntry | null {
+  const inFlight = reloadsInFlight.get(tabId);
+  if (inFlight) {
+    frameGuarded.set(tabId, inFlight);
+    return null;
+  }
+  const entry: GuardEntry = { phase: 'reloading' };
+  frameGuarded.set(tabId, entry);
+  reloadsInFlight.set(tabId, entry);
+  return entry;
+}
+
+/**
  * Reloads a tab that hosted a frame of a locked site and waits for the reload to commit. When
  * the reload fails or does not commit in time (a beforeunload or resubmission dialog keeps the
- * old document and its frame), the tab is recreated instead (closing a tab never asks).
+ * old document and its frame), the tab is recreated instead (closing a tab never asks). Runs
+ * outside ruleQueue (the recreation itself is queued). Never throws.
  */
-async function reloadFrameHost(tab: Tab): Promise<void> {
-  const tabId = tab.id;
-  if (tabId === undefined) return;
+async function reloadFrameHost(tabId: number, entry: GuardEntry): Promise<void> {
   let settle!: (committed: boolean) => void;
   const committed = new Promise<boolean>((resolve) => (settle = resolve));
   const timer = setTimeout(() => settle(false), RELOAD_CONFIRM_MS);
@@ -787,25 +1032,57 @@ async function reloadFrameHost(tab: Tab): Promise<void> {
   } finally {
     clearTimeout(timer);
     reloadWaiters.delete(tabId);
+    if (reloadsInFlight.get(tabId) === entry) reloadsInFlight.delete(tabId);
   }
-  if (reloaded) return;
+  if (reloaded) {
+    entry.phase = 'reloaded';
+    return;
+  }
   console.warn('relock: the reload did not commit, recreating the tab');
-  const url = tab.pendingUrl || tab.url || undefined;
-  await recreateTab(tab, url, url ?? '');
+  await ruleQueue(async () => {
+    let tab: Tab | undefined;
+    try {
+      tab = await browser.tabs.get(tabId);
+    } catch {
+      return; // closed meanwhile (e.g. by a sweep)
+    }
+    if (!tab) return;
+    const url = tab.pendingUrl || tab.url || undefined;
+    const created = await recreateTab(tab, url, url ?? '');
+    if (frameGuarded.get(tabId) === entry) {
+      frameGuarded.delete(tabId);
+      // The new tab holds the same host page: a locked frame there is the second strike.
+      if (created !== undefined) frameGuarded.set(created, { phase: 'reloaded' });
+    }
+  }).catch((err: unknown) => console.warn('relock: could not recreate a tab', err));
 }
 
-async function reloadAll(tabs: Tab[]): Promise<void> {
-  await Promise.all(tabs.map((t) => reloadFrameHost(t)));
+/** Marks `tabs` as reloading (call inside ruleQueue); the returned work reloads them later. */
+function planReloads(tabs: Tab[]): () => Promise<void> {
+  const marked: [number, GuardEntry][] = [];
+  for (const tab of tabs) {
+    if (tab.id === undefined) continue;
+    const entry = markReloading(tab.id);
+    if (entry) marked.push([tab.id, entry]);
+  }
+  return async () => {
+    await Promise.all(marked.map(([id, entry]) => reloadFrameHost(id, entry)));
+  };
 }
 
 /**
  * Frames (not top frames) that show a page of a locked domain right now, by tab: their origins.
- * Blocked frames (errorOccurred) are left out. Never throws; a tab whose frames cannot be
- * listed is skipped.
+ * Blocked frames (errorOccurred) are left out. `unlisted`: tabs whose frames could not be listed.
+ * Never throws.
  */
-async function lockedFrames(tabs: Tab[], domains: string[], open: string[]): Promise<Map<number, string[]>> {
+async function lockedFrames(
+  tabs: Tab[],
+  domains: string[],
+  open: string[],
+): Promise<{ found: Map<number, string[]>; unlisted: Set<number> }> {
   const found = new Map<number, string[]>();
-  if (domains.length === 0) return found;
+  const unlisted = new Set<number>();
+  if (domains.length === 0) return { found, unlisted };
   await Promise.all(
     tabs.map(async (tab) => {
       if (tab.id === undefined) return;
@@ -813,16 +1090,21 @@ async function lockedFrames(tabs: Tab[], domains: string[], open: string[]): Pro
       try {
         frames = await browser.webNavigation.getAllFrames({ tabId: tab.id });
       } catch {
+        unlisted.add(tab.id);
         return;
       }
-      const origins = (frames ?? [])
+      if (!frames) {
+        unlisted.add(tab.id);
+        return;
+      }
+      const origins = frames
         .filter((f) => f.frameId !== 0 && !f.errorOccurred)
         .map((f) => httpOrigin(lockedTarget(f.url, domains, open) ?? undefined))
         .filter((o) => o !== null);
       if (origins.length > 0) found.set(tab.id, origins);
     }),
   );
-  return found;
+  return { found, unlisted };
 }
 
 export type RelockReason = 'idle' | 'screen' | 'windows' | 'manual' | 'update' | 'command';
@@ -830,15 +1112,16 @@ export type RelockReason = 'idle' | 'screen' | 'windows' | 'manual' | 'update' |
 /**
  * Clears the unlock rule and replaces every open tab of a locked domain with the lock page.
  * Fails closed: a storage or tabs error after the rule is cleared still sweeps the tabs (with the
- * last known settings), and the first error is rethrown only after the sweep.
+ * last known settings), and the first error is rethrown only after the sweep. The site-data
+ * removal and the frame-host reloads finish after the queue moved on; this waits for them.
  */
 export function relock(reason: RelockReason): Promise<void> {
   void reason;
-  return ruleQueue(() => relockNow());
+  return runQueued(() => relockNow());
 }
 
 /** The relock itself; call inside ruleQueue. `keepSettings`: the settings unlock stays. */
-async function relockNow({ keepSettings = false }: { keepSettings?: boolean } = {}): Promise<void> {
+async function relockNow({ keepSettings = false }: { keepSettings?: boolean } = {}): Promise<Followup> {
   // The sweep uses a listing taken after the rule is cleared, so a tab that opened or started
   // loading a locked site meanwhile is included. The listing taken before is only a fallback
   // for when the later one fails.
@@ -863,30 +1146,32 @@ async function relockNow({ keepSettings = false }: { keepSettings?: boolean } = 
       firstError ??= err;
     }
   }
+  let work: Promise<unknown> = Promise.resolve();
   if (await passwordMaybeSet()) {
     const { settings, real } = await settingsOrFallback();
     const tabs = (await queryTabs()) ?? before ?? [];
-    // Frames showing a locked site now, besides the tabs recorded while unlocked.
-    const frames = await lockedFrames(tabs, settings.domains, []);
+    // Only tabs that show a locked site in a frame right now are reloaded (a reload throws away
+    // unsaved work). A recorded host whose frames cannot be listed is reloaded too (fail closed).
+    const { found: frames, unlisted } = await lockedFrames(tabs, settings.domains, []);
     const frameOrigins = [...frames.values()].flat();
     for (const o of frameOrigins) await addShownOrigin(o).catch((err) => console.warn('relock: record failed', err));
-    const framed = (await readFrameHosts()).ids;
-    for (const id of frames.keys()) framed.add(id);
+    const framed = new Set(frames.keys());
+    for (const id of (await readFrameHosts()).ids) if (unlisted.has(id)) framed.add(id);
     // Runs alongside the sweep; a failure is logged and the rules and the sweep still apply.
     const removed = removeSiteData([
       ...new Set([...(await siteDataOriginsNow(settings.domains, tabs, real)), ...frameOrigins]),
     ]);
     const plan = planSweep(tabs, settings, (await readShownLocked()).ids, framed);
     // Frames get no tab guard, and a frame the site's service worker answers never meets the
-    // block rule, so the hosts are reloaded once the removal finished (or gave up), alongside
-    // the sweep.
-    const reloads = removed.then(() => reloadAll(plan.reload));
+    // block rule, so the hosts are reloaded once the removal finished (or gave up).
+    const reloads = planReloads(plan.reload);
     await sweepTabs(plan);
     await clearTabSet(SHOWN_LOCKED_KEY, shownLocked);
     await clearTabSet(FRAME_HOSTS_KEY, frameHosts);
-    await reloads;
+    await pruneEngineTargets();
+    work = removed.then(reloads);
   }
-  if (firstError) throw firstError;
+  return followupOf(work, firstError);
 }
 
 /** Listed domains' origins, the listed shown origins and the open locked tabs' origins. */
@@ -897,39 +1182,68 @@ async function siteDataOriginsNow(domains: string[], tabs: Tab[], prune: boolean
   return siteDataOrigins(domains, [...(await listedShownOrigins(domains, prune)), ...tabOrigins]);
 }
 
-type SweepStep = { tab: Tab; action: 'lock'; target: string } | { tab: Tab; action: 'recreate' };
+// Sweep order: what shows a locked site on screen first, then other locked tabs, then the
+// extensions page, then the tabs recreated only for their history.
+type SweepStep = { tab: Tab; action: 'lock'; target: string; rank: number } | { tab: Tab; action: 'recreate'; rank: number };
 
-/** What a relock does to each tab, in tab order; the frame hosts to reload come separately. */
+/** The extensions page `tab` shows or is loading, else null. */
+function extensionsUrlOf(tab: Tab): string | null {
+  if (tab.url && isExtensionsPage(tab.url)) return tab.url;
+  if (tab.pendingUrl && isExtensionsPage(tab.pendingUrl)) return tab.pendingUrl;
+  return null;
+}
+
+/**
+ * What a relock does to each tab; the frame hosts to reload come separately. Locked targets
+ * include blob: documents (as their origin) and empty about:blank/about:srcdoc tabs that a tab
+ * which showed a locked site opened (it may have written that site's content into them).
+ */
 function planSweep(
   tabs: Tab[],
   settings: Settings,
   shown: Set<number>,
   framed: Set<number>,
 ): { steps: SweepStep[]; reload: Tab[] } {
-  const locked = new Set(tabsToRelock(tabs, settings.domains));
+  const domains = settings.domains;
+  const locked = new Set(tabsToRelock(tabs, domains));
+  const byId = new Map(tabs.filter((t) => t.id !== undefined).map((t) => [t.id!, t]));
+  const targetOf = (t: Tab) => lockedTarget(t.url, domains) ?? lockedTarget(t.pendingUrl, domains);
   const steps: SweepStep[] = [];
   const reload: Tab[] = [];
   for (const tab of tabs) {
     let target: string | null = null;
+    let rank = 1;
+    const opener = tab.openerTabId === undefined ? undefined : byId.get(tab.openerTabId);
     if (locked.has(tab)) {
-      target = lockedTarget(tab.url, settings.domains) ?? lockedTarget(tab.pendingUrl, settings.domains);
-    } else if (guardActive(settings) && tab.url && isExtensionsPage(tab.url)) {
+      target = targetOf(tab);
+    } else if (
+      isBlankDocument(tab.url) &&
+      tab.openerTabId !== undefined &&
+      (shown.has(tab.openerTabId) || (opener !== undefined && locked.has(opener)))
+    ) {
+      // The opener's site when it shows one now (its origin, as for blob:), else no target.
+      const openerTarget = opener !== undefined && locked.has(opener) ? targetOf(opener) : null;
+      const origin = httpOrigin(openerTarget ?? undefined);
+      target = origin === null ? '' : `${origin}/`;
+    } else if (guardActive(settings) && extensionsUrlOf(tab) !== null) {
       // An extensions page left open while unlocked would stay usable after relocking.
-      target = tab.url;
+      target = extensionsUrlOf(tab);
+      rank = 2;
     }
-    if (target) {
-      steps.push({ tab, action: 'lock', target });
+    if (target !== null) {
+      steps.push({ tab, action: 'lock', target, rank: rank === 1 && tab.active ? 0 : rank });
     } else if (tab.id !== undefined && shown.has(tab.id)) {
       // It showed a locked site earlier and moved on: same page, but in a tab with no history.
-      steps.push({ tab, action: 'recreate' });
+      steps.push({ tab, action: 'recreate', rank: 3 });
     } else if (tab.id !== undefined && framed.has(tab.id)) {
       reload.push(tab);
     }
   }
+  steps.sort((a, b) => a.rank - b.rank);
   return { steps, reload };
 }
 
-/** Runs the sweep steps; replacing a tab keeps every index stable, so order is kept. */
+/** Runs the sweep steps; replacing a tab keeps every index stable, so any order works. */
 async function sweepTabs({ steps }: { steps: SweepStep[] }): Promise<void> {
   for (const step of steps) {
     if (step.action === 'lock') {
@@ -943,23 +1257,28 @@ async function sweepTabs({ steps }: { steps: SweepStep[] }): Promise<void> {
 }
 
 /**
- * Worker start and browser start: re-applies the settings and, while the extensions page counts
- * as locked with the guard on, sends any open extensions page to the lock page (a
- * session-restored tab may never fire tabs.onUpdated with a url). An existing unlock is kept.
+ * Worker start and browser start: binds restored lock tabs to their targets, re-applies the
+ * settings and, while the extensions page counts as locked with the guard on, sends any open
+ * extensions page to the lock page (a session-restored tab may never fire tabs.onUpdated with a
+ * url). An existing unlock is kept.
  */
 export function onWorkerStart(): Promise<void> {
-  return ruleQueue(() => workerStartNow());
+  return runQueued(() => workerStartNow());
 }
 
-async function workerStartNow(): Promise<void> {
+async function workerStartNow(): Promise<Followup> {
+  const tabs = await queryTabs();
+  if (tabs) await rebindLockTabs(tabs);
   const settings = await getSettings();
-  // A start is a new baseline: nothing counts as newly locked (the start sweeps cover tabs).
+  // A start is a new baseline: nothing counts as newly locked (the start sweeps cover tabs). A
+  // settings write that woke the worker is swept by its own resync, which knows the list before.
   appliedLocked = null;
-  await applyNow(settings);
-  if (!guardActive(settings) || !(await getAuth()).password) return;
-  if (await extensionsOpen(await unlockOrLocked(), settings)) return;
-  const tabs = (await browser.tabs.query({})).filter((t) => t.url && isExtensionsPage(t.url));
-  for (const tab of tabs) await replaceWithLockPage(tab, tab.url!);
+  const followup = await applyNow(settings);
+  if (!guardActive(settings) || !(await getAuth()).password) return followup;
+  if (await extensionsOpen(await unlockOrLocked(), settings)) return followup;
+  const pages = (await browser.tabs.query({})).filter((t) => extensionsUrlOf(t) !== null);
+  for (const tab of pages) await replaceWithLockPage(tab, extensionsUrlOf(tab)!);
+  return followup;
 }
 
 /**
@@ -970,13 +1289,15 @@ async function workerStartNow(): Promise<void> {
  * restricted steps run with the last known settings even when the worker-start work fails.
  */
 export function onBrowserStart(): Promise<void> {
-  return ruleQueue(async () => {
+  return runQueued(async () => {
     let firstError: unknown = null;
+    let start = NO_FOLLOWUP;
     try {
-      await workerStartNow();
+      start = await workerStartNow();
     } catch (err) {
       firstError = err;
     }
+    let work: Promise<unknown> = Promise.resolve();
     if (await passwordMaybeSet()) {
       const { settings, real } = await settingsOrFallback();
       const open = openDomains(await unlockOrLocked(), settings);
@@ -984,7 +1305,7 @@ export function onBrowserStart(): Promise<void> {
       if (locked.length > 0) {
         const tabs = (await queryTabs()) ?? [];
         // Restored tabs that show a locked site in a frame (the session-only record is gone).
-        const frames = await lockedFrames(tabs, settings.domains, open);
+        const { found: frames } = await lockedFrames(tabs, settings.domains, open);
         const origins = [...(await siteDataOriginsNow(settings.domains, tabs, real)), ...[...frames.values()].flat()];
         // Origins of open domains keep their workers.
         const removed = removeSiteData([
@@ -996,18 +1317,16 @@ export function onBrowserStart(): Promise<void> {
           ),
         ]);
         const relocked = new Set(tabsToRelock(tabs, settings.domains, open));
-        const reloads = removed.then(() =>
-          reloadAll(tabs.filter((t) => t.id !== undefined && frames.has(t.id) && !relocked.has(t))),
-        );
+        const reloads = planReloads(tabs.filter((t) => t.id !== undefined && frames.has(t.id) && !relocked.has(t)));
         for (const tab of relocked) {
           const target =
             lockedTarget(tab.url, settings.domains, open) ?? lockedTarget(tab.pendingUrl, settings.domains, open);
           if (target) await replaceWithLockPage(tab, target);
         }
-        await reloads;
+        work = removed.then(reloads);
       }
     }
-    if (firstError) throw firstError;
+    return followupOf(Promise.all([start.wait, work]), firstError);
   });
 }
 
@@ -1029,23 +1348,20 @@ function fromTopFrame(sender: Sender): boolean {
 
 /**
  * The target of the unlocking lock page: from its token (sent, else the one in the sender's
- * URL) when the token belongs to that tab, else the old raw `returnTo` (http(s) only). Null
- * when there is none or it is not safe. Also returns the token to delete after use.
+ * URL) when the token belongs to that tab. Null when there is none or it is not safe. Also
+ * returns the token to delete after use.
  */
 async function unlockTarget(
-  req: { token?: string; returnTo?: string },
+  req: { token?: string },
   sender: Sender,
   domains: string[],
 ): Promise<{ url: string | null; token: string | null }> {
   const tabId = sender.tab?.id;
   const token = req.token ?? lockPageToken(sender.url) ?? null;
-  if (token !== null) {
-    const record = await readToken(token);
-    if (!record || tabId === undefined || record.tabId !== tabId) return { url: null, token: null };
-    return { url: safeTokenTarget(record, domains), token };
-  }
-  const raw = safeReturnTo(req.returnTo, domains);
-  return { url: raw !== null && !raw.startsWith('chrome:') ? raw : null, token: null };
+  if (token === null || tabId === undefined) return { url: null, token: null };
+  const record = await readTokenFor(token, tabId);
+  if (!record || record.tabId !== tabId) return { url: null, token: null };
+  return { url: safeTokenTarget(record, domains), token };
 }
 
 /** Whether `url` may be opened now: an open domain's page, or the extensions page when open. */
@@ -1071,7 +1387,7 @@ async function returnLockTabs(settings: Settings, unlock: UnlockRule | null, sen
     if (tab.id === undefined || tab.id === senderTabId) continue;
     const token = lockPageToken(tab.url);
     if (token === undefined) continue;
-    const record = await readToken(token);
+    const record = await readTokenFor(token, tab.id);
     if (!record || record.source !== 'engine' || record.tabId !== tab.id) continue;
     const url = safeTokenTarget(record, settings.domains);
     if (url === null || !(await reachable(url, settings, unlock))) continue;
@@ -1100,7 +1416,7 @@ async function targetAnswer(token: string, url: string, domains: string[]): Prom
  */
 async function returnIfOpen(tabId: number, token: string): Promise<boolean> {
   try {
-    const record = await readToken(token);
+    const record = await readTokenFor(token, tabId);
     if (!record || record.tabId !== tabId) return false;
     // In ruleQueue: a relock running now finishes first, and the settings and the rule are
     // read after it.
@@ -1162,8 +1478,12 @@ async function handle(req: Request, sender: Sender): Promise<Response | TargetRe
       });
       if (check !== 'ok') return fail(check);
       // One ruleQueue step: the settings, the rule change, this tab's navigation and the other
-      // lock tabs all see the same state, and no relock can run in between.
-      await ruleQueue(async () => {
+      // lock tabs all see the same state, and no relock can run in between. `opened`: this tab
+      // was sent to its page (else the lock page says what to do).
+      const opened = await ruleQueue(async () => {
+        // The frame guard counts strikes from one relock or unlock to the next.
+        frameGuarded.clear();
+        let sent = false;
         const settings = await getSettings();
         const tabId = sender.tab?.id;
         const { url, token } = await unlockTarget(req, sender, settings.domains);
@@ -1183,12 +1503,18 @@ async function handle(req: Request, sender: Sender): Promise<Response | TargetRe
         }
         const unlock = await unlockOrLocked();
         if (tabId !== undefined && url !== null && (await reachable(url, settings, unlock))) {
-          await browser.tabs.update(tabId, { url }).catch((err) => console.warn('unlock: return failed', err));
+          try {
+            await browser.tabs.update(tabId, { url });
+            sent = true;
+          } catch (err) {
+            console.warn('unlock: return failed', err);
+          }
           if (token !== null) await deleteTokens([token]);
         }
         await returnLockTabs(settings, unlock, tabId);
+        return sent;
       });
-      return ok();
+      return { ok: true, state: await getState(), opened };
     }
 
     case 'unlockSettings': {
@@ -1225,7 +1551,7 @@ async function handle(req: Request, sender: Sender): Promise<Response | TargetRe
     case 'describeTarget': {
       const tabId = sender.tab?.id;
       if (!fromTopFrame(sender) || tabId === undefined) return fail('invalid_target');
-      const record = await readToken(req.token);
+      const record = await readTokenFor(req.token, tabId);
       if (!record || record.tabId !== tabId) return fail('invalid_target');
       const { domains } = await getSettings();
       const url = safeTokenTarget(record, domains);
@@ -1342,22 +1668,10 @@ export async function onTabUpdated(
 ): Promise<void> {
   const url = updatedUrl(changeInfo, tab);
   if (!url) return;
-  // The extensions-page guard comes first, before any other storage read, so it stays fast.
+  // The extensions-page guard comes first, before any other storage read.
   if (isExtensionsPage(url)) {
     if (!SETTINGS_GUARD_BUILD || changeInfo.url === undefined) return;
-    // Fails closed: unreadable settings are the last known ones (else the defaults, guard on),
-    // an unreadable password counts as set.
-    let settings: Settings;
-    try {
-      settings = await getSettings();
-    } catch (err) {
-      console.warn('tabs: settings read failed, guarding the extensions page', err);
-      settings = lastSettings ?? DEFAULT_SETTINGS;
-    }
-    if (!settings.settingsGuard) return;
-    if (!(await passwordMaybeSet()) || (await extensionsOpen(await unlockOrLocked(), settings))) return;
-    await browser.tabs.update(tabId, { url: await engineLockUrlFor(tabId, url) });
-    return;
+    return guardExtensionsPage(tabId, url);
   }
   let settings: Settings;
   try {
@@ -1367,7 +1681,7 @@ export async function onTabUpdated(
     // closed; an origin only when the last known list has it), then guard with the settings read
     // again when the guard's turn comes.
     console.warn('tabs: settings read failed', err);
-    if (!/^(view-source:)?https?:/i.test(url)) return;
+    if (!HTTP_LIKE.test(url)) return;
     const known = lastSettings ? lockedTarget(url, lastSettings.domains) : null;
     await trackShownLocked(tabId, httpOrigin(known ?? undefined)).catch((e) =>
       console.warn('tabs: could not record a tab', e),
@@ -1390,6 +1704,36 @@ export async function onTabUpdated(
   // An open domain's page needs no guard (checked again at the guard's turn).
   if (lockedTarget(url, settings.domains, openDomains(await unlockOrLocked(), settings)) === null) return;
   await guardLockedTab(tabId, settings.domains);
+}
+
+/**
+ * Sends tab `tabId` (now on the extensions page `url`) to the lock page while that page counts
+ * as locked. In ruleQueue, so it reads the extensions unlock after any unlock or relock before
+ * it. Fails closed: unreadable settings are the last known ones (else the defaults, guard on),
+ * an unreadable password counts as set.
+ */
+function guardExtensionsPage(tabId: number, url: string): Promise<void> {
+  return ruleQueue(async () => {
+    let settings: Settings;
+    try {
+      settings = await getSettings();
+    } catch (err) {
+      console.warn('tabs: settings read failed, guarding the extensions page', err);
+      settings = lastSettings ?? DEFAULT_SETTINGS;
+    }
+    if (!settings.settingsGuard) return;
+    if (!(await passwordMaybeSet()) || (await extensionsOpen(await unlockOrLocked(), settings))) return;
+    // Checked again right before: the tab may have moved on while this waited its turn. When it
+    // cannot be read, the update goes ahead (a closed tab just fails it).
+    try {
+      const now = await browser.tabs.get(tabId);
+      const shown = now?.pendingUrl || now?.url;
+      if (shown && !isExtensionsPage(shown)) return;
+    } catch {
+      // fall through
+    }
+    await browser.tabs.update(tabId, { url: await engineLockUrlFor(tabId, url) });
+  });
 }
 
 /**
@@ -1434,88 +1778,83 @@ async function guardWith(tabId: number, domains: string[], open: string[]): Prom
  * serve the site later). Recorded whatever the lock state, so a commit just before a relock is
  * never missed. While that domain is locked, such a commit means the frame was answered without
  * the rules (its site's service worker): the frame guard removes that origin's workers and
- * reloads the host. A main frame that commits a new page (not a reload) in a frame host moves
- * the tab to the shown-locked set: the embedding page now sits in its history and back/forward
- * cache. The record is queued at once; the settings are read when its turn comes.
+ * reloads the host. Ordinary frames of other sites are skipped at once while the settings are
+ * known; anything else is queued and the settings are read when its turn comes.
  */
 export function onFrameCommitted(details: {
   tabId: number;
   frameId: number;
   url: string;
   transitionType?: string;
-  parentDocumentId?: string;
 }): Promise<void> {
   const { tabId, frameId, url } = details;
   // A frame-host reload waiting for its commit hears it here, even while a relock holds the queue.
   if (frameId === 0 && details.transitionType === 'reload') reloadWaiters.get(tabId)?.();
-  if (tabId < 0) return Promise.resolve();
-  if (frameId === 0) {
-    if (details.transitionType === 'reload') return Promise.resolve();
-    return ruleQueue(async () => {
-      const framed = await readFrameHosts();
-      if (!framed.ids.delete(tabId)) return;
-      const shown = await readShownLocked();
-      shown.ids.add(tabId);
-      await writeShownLocked(shown);
-      await writeFrameHosts(framed);
-    });
-  }
-  return ruleQueue(async () => {
+  // A main frame is the tab guard's job; the record of a frame host stays until the next relock,
+  // which lists the tab's frames again.
+  if (tabId < 0 || frameId === 0) return Promise.resolve();
+  const known = watchedSettings();
+  if (known !== null && lockedTarget(url, known.domains) === null) return Promise.resolve();
+  // What the frame guard had done for this tab when the frame committed (a reload on its way
+  // replaces this frame's document; after it, a locked frame is the second strike).
+  const seen = frameGuarded.get(tabId);
+  const seenPhase = seen?.phase;
+  return ruleQueue(async (): Promise<Followup> => {
     const settings = await settingsOrLastKnown();
     if (settings === null) {
       if (/^https?:/i.test(url)) await trackFrameHostNow(tabId, null);
-      return;
+      return NO_FOLLOWUP;
     }
     const target = lockedTarget(url, settings.domains);
-    if (target === null) return;
+    if (target === null) return NO_FOLLOWUP;
     const origin = httpOrigin(target);
     try {
       await trackFrameHostNow(tabId, origin);
     } catch (err) {
       console.warn('frames: could not record a frame of a locked site', err);
     }
-    if (!(await passwordMaybeSet())) return;
-    if (lockedTarget(url, settings.domains, openDomains(await unlockOrLocked(), settings)) === null) return;
-    await guardFrame(tabId, target, origin, details.parentDocumentId);
-  });
+    if (!(await passwordMaybeSet())) return NO_FOLLOWUP;
+    if (lockedTarget(url, settings.domains, openDomains(await unlockOrLocked(), settings)) === null) return NO_FOLLOWUP;
+    return guardFrame(tabId, target, origin, seen, seenPhase);
+  }).then((followup) => followup.wait);
 }
 
-// Tabs the frame guard handled lately: when, and for which host document.
-const frameGuarded = new Map<number, { at: number; parentDocumentId: string | undefined }>();
-
 /**
- * A frame of a locked site committed while locked in tab `tabId`. First time: remove that
- * origin's service workers and caches, then reload the host (recreated if the reload does not
- * commit). Again within a short time from a new host document (the worker survived): the host
- * tab gets the lock page for the frame's site. Further frames of a host document already handled
- * are skipped. Call inside ruleQueue.
+ * A frame of a locked site committed while locked in tab `tabId`; `seen`/`seenPhase` is what the
+ * guard had done for the tab at that commit. First strike: remove that origin's service workers
+ * and caches, then reload the host (recreated if the reload does not commit), after the queue
+ * moved on. A commit while that reload was on its way is skipped (the reload replaces it). A
+ * locked frame after the reload committed is the second strike, until the next relock or
+ * unlock: the host tab gets the lock page for the frame's site. Call inside ruleQueue.
  */
 async function guardFrame(
   tabId: number,
   target: string,
   origin: string | null,
-  parentDocumentId: string | undefined,
-): Promise<void> {
-  const now = Date.now();
-  const last = frameGuarded.get(tabId);
-  const recent = last !== undefined && now - last.at < FRAME_GUARD_WINDOW_MS;
-  if (recent && parentDocumentId !== undefined && parentDocumentId === last.parentDocumentId) return;
+  seen: GuardEntry | undefined,
+  seenPhase: GuardEntry['phase'] | undefined,
+): Promise<Followup> {
+  const current = frameGuarded.get(tabId);
+  // A reload that started after this commit, or was on its way at it, replaces that document.
+  // (A relock or unlock since then cleared the record: current is undefined, a first strike.)
+  if (current !== undefined && (current !== seen || seenPhase === 'reloading')) return NO_FOLLOWUP;
+  const secondStrike = current !== undefined && seenPhase === 'reloaded';
   let tab: Tab | undefined;
   try {
     tab = await browser.tabs.get(tabId);
   } catch {
-    return; // closed meanwhile
+    return NO_FOLLOWUP; // closed meanwhile
   }
-  if (!tab) return;
-  if (recent) {
+  if (!tab) return NO_FOLLOWUP;
+  if (secondStrike) {
     frameGuarded.delete(tabId);
     console.warn('frames: a locked frame came back after the removal and the reload, locking its tab');
     await replaceWithLockPage(tab, target);
-    return;
+    return NO_FOLLOWUP;
   }
-  frameGuarded.set(tabId, { at: now, parentDocumentId });
-  if (origin !== null) await removeSiteData([origin]);
-  await reloadFrameHost(tab);
+  const reload = planReloads([tab]);
+  const removed = origin === null ? Promise.resolve(true) : removeSiteData([origin]);
+  return followupOf(removed.then(reload));
 }
 
 /** A tab swapped for another (prerender, instant pages): the new ID inherits the old one's record. */

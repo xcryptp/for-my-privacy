@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LOCK_COMMAND, shortcutOf } from '../../entrypoints/popup/main';
+import { LOCK_COMMAND, shortcutOf, stateLineKey } from '../../entrypoints/popup/main';
 
 describe('shortcutOf', () => {
   it('returns the shortcut set for Lock now', () => {
@@ -14,5 +14,13 @@ describe('shortcutOf', () => {
     expect(shortcutOf([{ name: 'lock-now' }])).toBeUndefined();
     expect(shortcutOf([{ name: 'other', shortcut: 'Ctrl+K' }])).toBeUndefined();
     expect(shortcutOf([])).toBeUndefined();
+  });
+});
+
+describe('stateLineKey', () => {
+  it('says whether some site is open right now', () => {
+    expect(stateLineKey({ hasPassword: true, unlocked: false })).toBe('popupAllLocked');
+    expect(stateLineKey({ hasPassword: true, unlocked: true })).toBe('popupSomeUnlocked');
+    expect(stateLineKey({ hasPassword: false, unlocked: false })).toBeUndefined();
   });
 });

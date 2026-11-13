@@ -49,6 +49,21 @@ export function scopeHintText(scope: UnlockScope, target: HintTarget, tr: typeof
   return target.domain ? tr('unlockHintSite', target.domain) : tr('unlockHintThisSite');
 }
 
+/** The page title and heading: the extensions page has its own, every site the general one. */
+export function titleKey(kind: 'site' | 'extensions' | undefined): 'lockTitle' | 'lockTitleExtensions' {
+  return kind === 'extensions' ? 'lockTitleExtensions' : 'lockTitle';
+}
+
+/**
+ * What the page says after a correct password: nothing while the worker sends the tab to its
+ * page (`opened`), else that the sites are open ('all' scope), or, in 'site' scope where nothing
+ * was opened or unlocked, how to get there.
+ */
+export function afterUnlockText(opened: boolean, scope: UnlockScope, tr: typeof t = t): string | undefined {
+  if (opened) return undefined;
+  return tr(scope === 'site' ? 'unlockNothingToOpen' : 'unlockedNoReturn');
+}
+
 function byId<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
   if (!el) throw new Error(`Missing #${id}`);
@@ -67,6 +82,7 @@ function init(): void {
   const subtitle = byId<HTMLElement>('subtitle');
   const settings = byId<HTMLAnchorElement>('settings');
   const scopeHint = byId<HTMLElement>('scope-hint');
+  const heading = byId<HTMLElement>('heading');
 
   // What this page may show and send: a token the worker issued for this tab. The raw `#u=` address
   // is handed over once and replaced in the address bar, so it never stays in the tab history.
@@ -86,6 +102,8 @@ function init(): void {
     host = res.host;
     kind = res.kind;
     answeredDomain = res.kind === 'site' ? res.domain : undefined;
+    heading.textContent = t(titleKey(kind));
+    document.title = t(titleKey(kind));
   }
 
   async function resolveTarget(): Promise<void> {
@@ -120,7 +138,10 @@ function init(): void {
     }
   }
 
-  // The line under Unlock follows the unlock setting; "all" is also what a failed read means.
+  // The unlock setting as last read ("all" is also what a failed read means).
+  let scope: UnlockScope = 'all';
+
+  // The line under Unlock follows the unlock setting.
   async function refreshHint(): Promise<void> {
     let current: Pick<Settings, 'unlockScope' | 'domains'> = { unlockScope: 'all', domains: [] };
     try {
@@ -128,6 +149,7 @@ function init(): void {
     } catch (err) {
       console.warn('settings read failed', err);
     }
+    scope = current.unlockScope;
     scopeHint.textContent = scopeHintText(current.unlockScope, {
       domain: listedDomainFor(host, answeredDomain, current.domains),
       kind,
@@ -136,7 +158,7 @@ function init(): void {
   }
 
   const targetReady = resolveTarget();
-  void targetReady.then(refreshHint).catch((err) => console.warn('hint failed', err));
+  const hintReady = targetReady.then(refreshHint).catch((err) => console.warn('hint failed', err));
   // A change of the unlock setting (or of the list) made on the settings page shows here at once.
   browser.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && 'settings' in changes) void targetReady.then(refreshHint);
@@ -156,9 +178,12 @@ function init(): void {
     error.textContent = message;
   }
 
-  function showUnlockedNoReturn(): void {
+  /** Hides the form and says what to do now (`opened`: the worker is sending the tab on). */
+  function showAfterUnlock(opened: boolean): void {
+    const text = afterUnlockText(opened, scope);
+    if (text === undefined) return;
     form.hidden = true;
-    done.textContent = t('unlockedNoReturn');
+    done.textContent = text;
     done.hidden = false;
   }
 
@@ -170,15 +195,17 @@ function init(): void {
     showError('');
     try {
       await targetReady; // the token comes from the claim, which may still be on its way
+      await hintReady; // and what an unlock opens comes from the setting
       const res = await send({ type: 'unlock', password: input.value, token });
       input.value = '';
       if (res.ok) {
         unlocked = true;
-        // The service worker navigates this tab when it holds a target for the token; otherwise,
-        // or if nothing happened after a moment, say that the site can be opened again.
-        // The extensions page that the guard sent here is opened by the worker: never claim there is nothing to open.
-        if (token === undefined) showUnlockedNoReturn();
-        else if (kind !== 'extensions') setTimeout(showUnlockedNoReturn, NO_RETURN_MS);
+        // The worker says whether it sent this tab to its page. If it did but the tab is still
+        // here after a moment (the navigation failed), say what to do. The extensions page the
+        // guard sent here is opened by the worker: never claim there is nothing to open.
+        const opened = res.opened === true;
+        if (!opened) showAfterUnlock(false);
+        else if (kind !== 'extensions') setTimeout(() => showAfterUnlock(false), NO_RETURN_MS);
         return;
       }
       if (res.state.waitMs > 0) countdown.start(res.state.waitMs);

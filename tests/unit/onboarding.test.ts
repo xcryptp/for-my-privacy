@@ -5,6 +5,7 @@ import {
   ONBOARDING_STEPS,
   PRESET_SITES,
   addCustomSite,
+  doneTipText,
   nextStep,
   prevStep,
   selectedOrigins,
@@ -156,6 +157,15 @@ describe('doneTipKey', () => {
   it('claims locked sites only when a site was saved', () => {
     expect(doneTipKey(0)).toBe('onboardingDoneTipEmpty');
     expect(doneTipKey(1)).toBe('onboardingDoneTip');
+  });
+});
+
+describe('doneTipText', () => {
+  const tr = (key: string, subs?: string | string[]) => `${key}(${[subs ?? []].flat().join(',')})`;
+  it('names the real Lock now shortcut, or says how to set one', () => {
+    expect(doneTipText('onboardingDoneTip', 'Ctrl+Shift+K', tr)).toBe('onboardingDoneTip(Ctrl+Shift+K)');
+    expect(doneTipText('onboardingDoneTip', undefined, tr)).toBe('onboardingDoneTipNoShortcut()');
+    expect(doneTipText('onboardingDoneTipEmpty', 'Ctrl+Shift+K', tr)).toBe('onboardingDoneTipEmpty()');
   });
 });
 

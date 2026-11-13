@@ -201,7 +201,7 @@
     "message": "다른 사이트"
   },
   "onboardingDoneTip": {
-    "message": "준비가 끝났습니다. 고른 사이트는 지금 잠겨 있습니다. 새 탭에서 열어 잠금 화면을 확인해 보세요. 나중에 바로 다시 잠그려면 이 확장 프로그램을 툴바에 고정하고 아이콘을 누르거나 Alt+Shift+L을 누르세요."
+    "message": "준비가 끝났습니다. 고른 사이트는 지금 잠겨 있습니다. 새 탭에서 열어 잠금 화면을 확인해 보세요. 나중에 바로 다시 잠그려면 이 확장 프로그램을 툴바에 고정하고 아이콘을 누르거나 단축키($1)를 누르세요."
   },
   "waitSeconds": {
     "message": "$1초"
@@ -295,5 +295,20 @@
   },
   "unlockScopeSaved": {
     "message": "저장되었습니다. 사이트가 다시 잠겼습니다."
+  },
+  "onboardingDoneTipNoShortcut": {
+    "message": "준비가 끝났습니다. 고른 사이트는 지금 잠겨 있습니다. 새 탭에서 열어 잠금 화면을 확인해 보세요. 나중에 바로 다시 잠그려면 이 확장 프로그램을 툴바에 고정하고 아이콘을 누르세요. chrome://extensions/shortcuts 에서 단축키도 정할 수 있습니다."
+  },
+  "unlockNothingToOpen": {
+    "message": "여기서 열 사이트가 없습니다. 사이트를 다시 열어 주세요."
+  },
+  "lockTitleExtensions": {
+    "message": "Chrome 확장 프로그램 페이지가 잠겨 있습니다"
+  },
+  "popupAllLocked": {
+    "message": "사이트가 잠겨 있습니다"
+  },
+  "popupSomeUnlocked": {
+    "message": "잠금이 풀린 사이트가 있습니다"
   }
 }

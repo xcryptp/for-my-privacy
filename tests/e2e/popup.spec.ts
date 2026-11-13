@@ -1,5 +1,5 @@
 import type { Page, Worker } from '@playwright/test';
-import { test, expect } from './fixtures';
+import { test, expect, visit } from './fixtures';
 
 type Api = {
   handleMessage: (req: unknown, sender: unknown) => Promise<unknown>;
@@ -59,11 +59,14 @@ test('Lock now locks the sites and the settings, then says Locked', async ({ con
   await sw.evaluate(() => (globalThis as unknown as { __fmp: { setUnlocked: (d: string[]) => Promise<void> } }).__fmp.setUnlocked(['example.test']));
   const page = await context.newPage();
   await openPopup(page, extensionId);
+  // The line under the title says a site is open, then that the sites are locked.
+  await expect(page.getByText(await msg(sw, 'popupSomeUnlocked'), { exact: true })).toBeVisible();
   await page.getByRole('button', { name: await msg(sw, 'lockNowButton') }).click();
   await expect(page.getByRole('status').filter({ hasText: await msg(sw, 'popupLocked') })).toBeVisible();
+  await expect(page.getByText(await msg(sw, 'popupAllLocked'), { exact: true })).toBeVisible();
   expect(await state(sw)).toMatchObject({ unlocked: false, settingsUnlocked: false });
   const site = await context.newPage();
-  await site.goto(origin('example.test')).catch(() => {});
+  await visit(site, origin('example.test'));
   await expect.poll(() => site.url()).toMatch(new RegExp(`^chrome-extension://${extensionId}/lock\\.html#[ut]=`));
 });
 

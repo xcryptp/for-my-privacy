@@ -9,6 +9,7 @@ import { normalizeDomain } from '../../src/lib/registrable-domain';
 import { DEFAULT_SETTINGS, getSettings, saveSettings, type Settings } from '../../src/lib/settings';
 import { saveSettingsFromInput } from '../../src/lib/settings-input';
 import { createCountdown } from '../../src/ui/countdown';
+import { lockShortcut } from '../../src/ui/shortcut';
 import { wrongPasswordText } from '../../src/ui/tries';
 import {
   ONBOARDING_KEY,
@@ -19,6 +20,7 @@ import {
   addCustomSite,
   commitTypedSite,
   doneTipKey,
+  doneTipText,
   limitsUrl,
   nextLabelKey,
   nextStep,
@@ -39,6 +41,9 @@ type View = 'setup' | 'locked' | 'settings';
 // How often an open page re-checks whether the worker locked again (idle, screen lock, Lock now elsewhere).
 const STATE_POLL_MS = 5000;
 const TOAST_MS = 3000;
+// After an unlock scope change: how often and how many times to ask whether the sites locked again.
+const SCOPE_RELOCK_POLL_MS = 200;
+const SCOPE_RELOCK_TRIES = 25;
 
 function byId<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -424,7 +429,12 @@ function init(): void {
     } else {
       const section = sectionFromHash(location.hash);
       showSection(section, false);
-      if (pendingTip) tip.textContent = t(pendingTip);
+      if (pendingTip) {
+        const key = pendingTip;
+        void lockShortcut().then((keys) => {
+          if (myEpoch === epoch) tip.textContent = doneTipText(key, keys, t);
+        });
+      }
       pendingTip = null;
       if (location.hash === '#permission-lost' && !banner.hidden) {
         // The link of the worker's notice leads here: the notice is what the person came for.
@@ -632,6 +642,28 @@ function init(): void {
     }
   }
 
+  /**
+   * Saves the unlock scope. The worker locks the sites again for the change (the settings stay
+   * open): the toast says so only once the worker reports them locked, else just "Saved.".
+   */
+  async function saveScope(scope: Settings['unlockScope']): Promise<void> {
+    const startEpoch = epoch;
+    let relocked = false;
+    await saveField({ unlockScope: scope }, () => '');
+    for (let i = 0; i < SCOPE_RELOCK_TRIES && startEpoch === epoch; i++) {
+      try {
+        if (!(await send({ type: 'getState' })).state.unlocked) {
+          relocked = true;
+          break;
+        }
+      } catch (err) {
+        console.warn('getState failed', err);
+      }
+      await new Promise((resolve) => setTimeout(resolve, SCOPE_RELOCK_POLL_MS));
+    }
+    if (startEpoch === epoch && view === 'settings') showToast(t(relocked ? 'unlockScopeSaved' : 'saved'));
+  }
+
   function showScope(scope: Settings['unlockScope']): void {
     scopeAll.checked = scope === 'all';
     scopeSite.checked = scope === 'site';
@@ -648,7 +680,8 @@ function init(): void {
       screenLock.checked = saved.lockOnScreenLock;
       guard.checked = saved.settingsGuard;
       showScope(saved.unlockScope);
-      showToast(message ? message(saved) : t('saved'));
+      const text = message ? message(saved) : t('saved');
+      if (text) showToast(text);
     } catch (err) {
       console.warn('save failed', err);
     }
@@ -878,9 +911,7 @@ function init(): void {
   for (const radio of [scopeAll, scopeSite]) {
     radio.addEventListener('change', () => {
       // The worker locks the sites again when the scope changes (the settings stay open): say so.
-      if (radio.checked) {
-        void saveField({ unlockScope: radio.value === 'site' ? 'site' : 'all' }, () => t('unlockScopeSaved'));
-      }
+      if (radio.checked) void saveScope(radio.value === 'site' ? 'site' : 'all');
     });
   }
 
@@ -936,13 +967,28 @@ function init(): void {
 
   // A change made on another options tab shows here too.
   browser.storage.onChanged.addListener((changes, area) => {
+    // A relock locks the settings: hide them at once instead of at the next state check.
+    if (area === 'session' && 'settingsUnlocked' in changes) {
+      if (changes.settingsUnlocked?.newValue !== true) void refreshState();
+      return;
+    }
     if (area !== 'local' || !('settings' in changes) || view !== 'settings') return;
     void renderSettings(epoch).catch((err) => console.warn('refresh failed', err));
   });
 
   // Keep the screen true to the worker: it may relock on idle, screen lock or window close.
+  // A hidden tab keeps no settings in the page (tab previews, a relock while away); they are
+  // drawn again when it comes back.
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) void refreshState();
+    if (!document.hidden) {
+      void refreshState();
+      return;
+    }
+    if (view !== 'settings') return;
+    epoch++;
+    clearSettingsView();
+    views.settings.hidden = true;
+    view = undefined;
   });
   window.addEventListener('focus', () => void refreshState());
   setInterval(() => {

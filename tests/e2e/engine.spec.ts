@@ -1,5 +1,5 @@
 import type { BrowserContext, Page, Worker } from '@playwright/test';
-import { test, expect, lockTargetOf } from './fixtures';
+import { test, expect, hasLockPageFor, lockTargetOf, stays, visit } from './fixtures';
 
 // The callbacks passed to sw.evaluate run inside the service worker, where `chrome` exists.
 declare const chrome: typeof import('wxt/browser').browser;
@@ -121,7 +121,7 @@ test('extensions page shows the lock page while locked', async ({ context, sw, e
   await setUp(sw, ['example.test']);
   await call(sw, { type: 'lockNow' });
   const page = await context.newPage();
-  await page.goto('chrome://extensions/').catch(() => {});
+  await visit(page, 'chrome://extensions/');
   await expect.poll(() => page.url()).toMatch(new RegExp(`^chrome-extension://${extensionId}/lock\\.html#t=`));
   expect(await lockTargetOf(sw, extensionId, page.url())).toBe('chrome://extensions/');
 });
@@ -132,8 +132,7 @@ test('extensions page opens normally while unlocked', async ({ context, sw }) =>
   expect(state.state.unlocked).toBe(true);
   const page = await context.newPage();
   await page.goto('chrome://extensions/');
-  await page.waitForTimeout(500);
-  expect(page.url()).toBe('chrome://extensions/');
+  await stays(() => page.url(), 'chrome://extensions/');
 });
 
 test('a tab that showed a locked site and moved on is recreated, so Back cannot restore it', async ({
@@ -156,10 +155,14 @@ test('a tab that showed a locked site and moved on is recreated, so Back cannot 
   // so the redirect rule never sees it).
   for (const p of context.pages()) {
     await p.goBack({ waitUntil: 'commit' }).catch(() => {});
-    await p.waitForTimeout(500);
-    if (p.isClosed()) continue;
-    expect(p.url().startsWith(origin('example.test')), p.url()).toBe(false);
-    expect(await p.title().catch(() => '')).not.toBe('ORIGINAL example.test');
+    await stays(
+      async () =>
+        p.isClosed() ||
+        (!p.url().startsWith(origin('example.test')) && (await p.title().catch(() => '')) !== 'ORIGINAL example.test'),
+      true,
+      500,
+      p.url(),
+    );
   }
 
   // The tab was replaced by a new one on the same URL, with no history behind it.
@@ -198,8 +201,7 @@ test('E1: a frame of a locked site inside another site stops showing it after a 
   expect(host.isClosed()).toBe(false);
   expect(host.url()).toBe(origin('other.test') + '/frame');
   expect(await host.evaluate(() => history.length)).toBe(historyBefore);
-  await host.waitForTimeout(500);
-  expect(await frame()!.locator('body').textContent().catch(() => '')).not.toContain('ORIGINAL-PAGE');
+  await stays(async () => (await frame()?.locator('body').textContent().catch(() => ''))?.includes('ORIGINAL-PAGE') ?? false, false);
   // The blocked frame of the reload is not recorded again, so the next relock leaves the tab be.
   expect(await sw.evaluate(async () => (await chrome.storage.session.get('frameHostTabs')).frameHostTabs ?? [])).toEqual(
     [],
@@ -229,15 +231,17 @@ test('E2: a service worker registered only inside a frame is removed by the relo
   typed.on('framenavigated', (f) => {
     if (f === typed.mainFrame()) commits.push(f.url());
   });
-  await typed.goto(deep + '/sw-page').catch(() => {});
-  // The tab guard may close the tab, so wait outside it.
-  await new Promise((r) => setTimeout(r, 1_000));
-  expect(commits.length).toBeGreaterThan(0);
-  expect(commits.filter((u) => u.startsWith(deep)), commits.join(', ')).toEqual([]);
-  for (const p of context.pages()) {
-    if (p.isClosed()) continue;
-    expect(await p.title().catch(() => ''), p.url()).not.toBe('ORIGINAL a.b.c.example.test');
-  }
+  await visit(typed, deep + '/sw-page');
+  await expect.poll(() => commits.length).toBeGreaterThan(0);
+  // Watched outside the tab, which the tab guard may close.
+  await stays(async () => {
+    const shown = commits.filter((u) => u.startsWith(deep));
+    if (shown.length > 0) return shown.join(', ');
+    for (const p of context.pages()) {
+      if (!p.isClosed() && (await p.title().catch(() => '')) === 'ORIGINAL a.b.c.example.test') return p.url();
+    }
+    return null;
+  }, null);
 });
 
 /** Types the password into a lock page and submits it (works with the `#u=` and `#t=` pages). */
@@ -289,9 +293,7 @@ test('E3: one unlock returns the lock tabs the relock opened, never a typed #u= 
   await expect.poll(() => lockB.url()).toBe(b);
   await expect.poll(() => lockA.url()).toBe(a);
   await expect(lockA).toHaveTitle('ORIGINAL www.example.test');
-  await crafted.waitForTimeout(500);
-  expect(crafted.url()).toContain('/lock.html');
-  expect(craftedExt.url()).toContain('/lock.html');
+  await stays(() => [crafted.url().includes('/lock.html'), craftedExt.url().includes('/lock.html')], [true, true], 500);
 });
 
 test('E3: claimTarget binds a #u= target to its tab and swaps it for a token', async ({
@@ -304,7 +306,7 @@ test('E3: claimTarget binds a #u= target to its tab and swaps it for a token', a
   await call(sw, { type: 'lockNow' });
   const target = origin('www.example.test') + '/p?q=1';
   const page = await context.newPage();
-  await page.goto(target).catch(() => {});
+  await visit(page, target);
   await expect.poll(() => page.url()).toContain('/lock.html#');
   const res = (await page.evaluate(
     (raw) => chrome.runtime.sendMessage({ type: 'claimTarget', raw }),
@@ -346,7 +348,7 @@ test("E7: with the 'site' scope, one unlock opens only that site; another listed
 
   const first = await context.newPage();
   const target = origin('www.example.test') + '/a';
-  await first.goto(target).catch(() => {});
+  await visit(first, target);
   await expect.poll(() => first.url()).toContain('/lock.html#');
   await unlockFromPage(first);
   await expect.poll(() => first.url()).toBe(target);
@@ -356,10 +358,9 @@ test("E7: with the 'site' scope, one unlock opens only that site; another listed
 
   // The other listed site still lands on the lock page; other addresses of the opened one load.
   const second = await context.newPage();
-  await second.goto(origin('second.test') + '/b').catch(() => {});
+  await visit(second, origin('second.test') + '/b');
   await expect.poll(() => second.url()).toMatch(new RegExp(`^chrome-extension://${extensionId}/lock\\.html#[ut]=`));
-  await second.waitForTimeout(300);
-  expect(await second.title()).not.toBe('ORIGINAL second.test');
+  await stays(async () => (await second.title().catch(() => '')) === 'ORIGINAL second.test', false, 500);
   const sub = await context.newPage();
   await sub.goto(origin('m.example.test') + '/');
   await expect(sub).toHaveTitle('ORIGINAL m.example.test');
@@ -407,11 +408,11 @@ test('EF1: a frame the site’s own service worker answers while locked is not l
 
   // A new visit to the host page as well.
   const again = await context.newPage();
-  await again.goto(origin('other.test') + '/frame-deep').catch(() => {});
+  await visit(again, origin('other.test') + '/frame-deep');
   const shownSite = new RegExp(`^${origin('a.b.c.example.test').replace(/[.]/g, '\\.')}|ORIGINAL`);
   await expect.poll(() => subFrames(context), { timeout: 10_000 }).not.toContainEqual(expect.stringMatching(shownSite));
-  await new Promise((r) => setTimeout(r, 1_000));
-  expect(await subFrames(context)).not.toContainEqual(expect.stringMatching(shownSite));
+  // And it stays gone: no frame shows the site again (the frame guard must not loop).
+  await stays(async () => (await subFrames(context)).filter((f) => shownSite.test(f)), [], 3_000);
 });
 
 test('EF2: a host page that holds its reload back with beforeunload still loses the frame', async ({
@@ -458,17 +459,121 @@ test("EF3/EF4: in 'site' scope the extensions lock page opens the extensions pag
   expect(after).toMatchObject({ unlocked: false, settingsUnlocked: true });
 
   const page = await context.newPage();
-  await page.goto('chrome://extensions/').catch(() => {});
+  await visit(page, 'chrome://extensions/');
   await expect.poll(() => page.url()).toMatch(new RegExp(`^chrome-extension://${extensionId}/lock\\.html#t=`));
   await unlockFromPage(page);
   await expect.poll(() => page.url()).toMatch(/^chrome:\/\/extensions/);
   // It stays open in another tab too, until the next relock.
   const second = await context.newPage();
   await second.goto('chrome://extensions/');
-  await second.waitForTimeout(500);
-  expect(second.url()).toBe('chrome://extensions/');
+  await stays(() => second.url(), 'chrome://extensions/');
   await call(sw, { type: 'lockNow' });
   const third = await context.newPage();
-  await third.goto('chrome://extensions/').catch(() => {});
+  await visit(third, 'chrome://extensions/');
   await expect.poll(() => third.url()).toMatch(new RegExp(`^chrome-extension://${extensionId}/lock\\.html#t=`));
+});
+
+test('FW1: a blob: tab a locked site opened while unlocked no longer shows it after a relock', async ({
+  context,
+  sw,
+  extensionId,
+  origin,
+}) => {
+  await setUp(sw, ['example.test']);
+  const site = await context.newPage();
+  await site.goto(origin('www.example.test') + '/');
+  await expect(site).toHaveTitle('ORIGINAL www.example.test');
+  // The site opens a document of its own in a blob: tab (an exported file, a print preview).
+  const [blobTab] = await Promise.all([
+    context.waitForEvent('page'),
+    site.evaluate(() => {
+      window.open(URL.createObjectURL(new Blob(['<title>BLOB</title>ORIGINAL-BLOB'], { type: 'text/html' })));
+    }),
+  ]);
+  await expect.poll(() => blobTab.locator('body').textContent().catch(() => '')).toContain('ORIGINAL-BLOB');
+  expect(blobTab.url()).toMatch(/^blob:http:\/\/www\.example\.test:/);
+
+  await call(sw, { type: 'lockNow' });
+
+  // Nothing on screen shows the blob document any more; its tab became a lock page for the origin.
+  const showsBlob = async () => {
+    for (const p of context.pages()) {
+      if (p.isClosed()) continue;
+      if (p.url().startsWith('blob:')) return p.url();
+      if ((await p.locator('body').textContent().catch(() => ''))?.includes('ORIGINAL-BLOB')) return p.url();
+    }
+    return null;
+  };
+  await expect.poll(showsBlob).toBeNull();
+  await expect
+    .poll(() => hasLockPageFor(context, sw, extensionId, origin('www.example.test') + '/'))
+    .toBe(true);
+  await expect.poll(showsBlob, { timeout: 2_000, intervals: [250] }).toBeNull();
+});
+
+test('FW1: an about:blank tab a locked site wrote into while unlocked is replaced by the relock', async ({
+  context,
+  sw,
+  origin,
+}) => {
+  await setUp(sw, ['example.test']);
+  const site = await context.newPage();
+  await site.goto(origin('example.test') + '/');
+  await expect(site).toHaveTitle('ORIGINAL example.test');
+  const [blank] = await Promise.all([
+    context.waitForEvent('page'),
+    site.evaluate(() => {
+      const w = window.open('about:blank');
+      w?.document.write('<title>WRITTEN</title>ORIGINAL-WRITTEN');
+      w?.document.close();
+    }),
+  ]);
+  await expect.poll(() => blank.locator('body').textContent().catch(() => '')).toContain('ORIGINAL-WRITTEN');
+
+  await call(sw, { type: 'lockNow' });
+
+  const showsWritten = async () => {
+    for (const p of context.pages()) {
+      if (p.isClosed()) continue;
+      if ((await p.locator('body').textContent().catch(() => ''))?.includes('ORIGINAL-WRITTEN')) return p.url();
+    }
+    return null;
+  };
+  await expect.poll(showsWritten).toBeNull();
+  await expect.poll(showsWritten, { timeout: 2_000, intervals: [250] }).toBeNull();
+});
+
+test('FW3: a lock tab restored after a browser restart still opens its own page on unlock', async ({
+  context,
+  sw,
+  extensionId,
+  origin,
+  relaunch,
+}) => {
+  await setUp(sw, ['example.test']);
+  const target = origin('www.example.test') + '/kept?x=1';
+  const site = await context.newPage();
+  await site.goto(target);
+  await expect(site).toHaveTitle('ORIGINAL www.example.test');
+  await call(sw, { type: 'lockNow' });
+  const lock = await lockPageFor(context, sw, extensionId, target);
+  const tokenUrl = lock.url();
+  expect(tokenUrl).toMatch(/#t=[0-9a-f]{32}$/);
+  // Give Chrome a moment to write its session file, as it would during normal use.
+  await expect.poll(() => lock.title()).not.toBe('');
+
+  await relaunch({ restoreSession: true });
+
+  let restored: Page | undefined;
+  await expect
+    .poll(
+      () => (restored = context.pages().find((p) => !p.isClosed() && p.url() === tokenUrl)) !== undefined,
+      { timeout: 15_000 },
+    )
+    .toBe(true);
+  // The restored page still names its site, then the unlock sends it there.
+  await expect(restored!.locator('#subtitle')).toContainText('www.example.test');
+  await unlockFromPage(restored!);
+  await expect.poll(() => restored!.url()).toBe(target);
+  await expect(restored!).toHaveTitle('ORIGINAL www.example.test');
 });

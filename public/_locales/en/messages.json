@@ -201,7 +201,7 @@
     "message": "Another site"
   },
   "onboardingDoneTip": {
-    "message": "All set. Your chosen sites are locked now. Open one in a new tab to see the lock page. To lock again right away later, pin this extension to the toolbar and click its icon, or press Alt+Shift+L."
+    "message": "All set. Your chosen sites are locked now. Open one in a new tab to see the lock page. To lock again right away later, pin this extension to the toolbar and click its icon, or press $1."
   },
   "waitSeconds": {
     "message": "$1 s"
@@ -295,5 +295,20 @@
   },
   "unlockScopeSaved": {
     "message": "Saved. Your sites are locked again."
+  },
+  "onboardingDoneTipNoShortcut": {
+    "message": "All set. Your chosen sites are locked now. Open one in a new tab to see the lock page. To lock again right away later, pin this extension to the toolbar and click its icon. You can also set a shortcut key for it at chrome://extensions/shortcuts."
+  },
+  "unlockNothingToOpen": {
+    "message": "Nothing to open here. Open the site again."
+  },
+  "lockTitleExtensions": {
+    "message": "Chrome's extensions page is locked"
+  },
+  "popupAllLocked": {
+    "message": "Sites are locked"
+  },
+  "popupSomeUnlocked": {
+    "message": "Some sites are unlocked"
   }
 }

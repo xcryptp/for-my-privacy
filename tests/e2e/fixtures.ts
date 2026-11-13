@@ -1,4 +1,4 @@
-import { test as base, chromium, type BrowserContext, type Worker } from '@playwright/test';
+import { test as base, chromium, type BrowserContext, type Page, type Worker } from '@playwright/test';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import fs from 'node:fs';
@@ -28,8 +28,11 @@ const SW_HOSTS = ['example.test', 'www.example.test', 'm.example.test', 'a.b.c.e
 type BrowserState = {
   context: BrowserContext;
   sw: Worker;
-  launch: () => Promise<void>;
+  launch: (options?: LaunchOptions) => Promise<void>;
 };
+
+/** `restoreSession`: start like Chrome set to "Continue where you left off" (tabs come back). */
+type LaunchOptions = { restoreSession?: boolean };
 
 type TestFixtures = {
   browserState: BrowserState;
@@ -37,7 +40,7 @@ type TestFixtures = {
   extensionId: string;
   sw: Worker;
   origin: (host: string) => string;
-  relaunch: () => Promise<void>;
+  relaunch: (options?: LaunchOptions) => Promise<void>;
 };
 
 type WorkerFixtures = {
@@ -136,7 +139,7 @@ self.addEventListener('fetch', (e) => {
   browserState: async ({ server }, use) => {
     const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fmp-e2e-'));
     const state = {
-      async launch() {
+      async launch({ restoreSession = false }: LaunchOptions = {}) {
         // Bundled Chromium only; extensions need a persistent context.
         const ctx = await chromium.launchPersistentContext(profileDir, {
           channel: 'chromium',
@@ -150,6 +153,7 @@ self.addEventListener('fetch', (e) => {
             `--host-resolver-rules=${HOST_RESOLVER_RULES}`,
             // navigator.serviceWorker needs a secure context; the test server is plain http.
             `--unsafely-treat-insecure-origin-as-secure=${SW_HOSTS.map((h) => `http://${h}:${server.port}`).join(',')}`,
+            ...(restoreSession ? ['--restore-last-session'] : []),
           ],
         });
         state.context = ctx;
@@ -182,9 +186,9 @@ self.addEventListener('fetch', (e) => {
   },
 
   relaunch: async ({ browserState }, use) => {
-    await use(async () => {
+    await use(async (options?: LaunchOptions) => {
       await browserState.context.close();
-      await browserState.launch();
+      await browserState.launch(options);
     });
   },
 });
@@ -222,3 +226,27 @@ export async function hasLockPageFor(
 
 // The callbacks passed to sw.evaluate run inside the service worker, where `chrome` exists.
 declare const chrome: typeof import('wxt/browser').browser;
+
+/**
+ * Asserts that `get` keeps answering `expected` for `ms` (checked every 100 ms), for things that
+ * must not happen after a step (a page coming back, a redirect undone). Fails at the first other answer.
+ */
+export async function stays<T>(get: () => Promise<T> | T, expected: T, ms = 1_000, label?: string): Promise<void> {
+  const end = Date.now() + ms;
+  for (;;) {
+    expect(await get() as unknown, label).toEqual(expected);
+    if (Date.now() >= end) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+/**
+ * page.goto for a navigation the extension may redirect or a tab guard may replace (which aborts
+ * the goto); the abort is logged with where the page ended, not thrown.
+ */
+export async function visit(page: Page, url: string): Promise<void> {
+  await page.goto(url).catch((err: Error) => {
+    const where = page.isClosed() ? '(page closed)' : page.url();
+    console.log(`goto ${url} ended on ${where}: ${err.message.split('\n')[0]}`);
+  });
+}

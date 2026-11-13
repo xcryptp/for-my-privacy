@@ -4,7 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <title data-i18n="extShortName">For My Privacy</title>
+    <!-- WXT writes this title to action.default_title (the toolbar tooltip), so it is the
+         message reference; the page sets its own title from the same message at start. -->
+    <title data-i18n="extShortName">__MSG_extShortName__</title>
     <link rel="stylesheet" href="../../src/ui/base.css" />
     <link rel="stylesheet" href="./style.css" />
   </head>
@@ -23,6 +25,7 @@
         </svg>
         <h1 data-i18n="extShortName"></h1>
       </header>
+      <p id="state" class="muted" hidden></p>
 
       <button id="lock" type="button" data-i18n="lockNowButton"></button>
       <p id="status" class="status" role="status"></p>

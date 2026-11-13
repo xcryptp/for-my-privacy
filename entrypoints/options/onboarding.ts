@@ -120,6 +120,19 @@ export function doneTipKey(savedSites: number): 'onboardingDoneTip' | 'onboardin
   return savedSites > 0 ? 'onboardingDoneTip' : 'onboardingDoneTipEmpty';
 }
 
+/**
+ * The Finish tip: with sites saved it names the Lock now shortcut Chrome really has (the person
+ * may have changed or cleared it), or says how to set one.
+ */
+export function doneTipText(
+  key: ReturnType<typeof doneTipKey>,
+  shortcut: string | undefined,
+  tr: (key: string, subs?: string | string[]) => string,
+): string {
+  if (key !== 'onboardingDoneTip') return tr(key);
+  return shortcut ? tr('onboardingDoneTip', shortcut) : tr('onboardingDoneTipNoShortcut');
+}
+
 /** Storage key of the onboarding progress; removed on Finish. */
 export const ONBOARDING_KEY = 'onboarding';
 

@@ -128,6 +128,11 @@ function applyPatch<T extends object>(
   return next;
 }
 
+/** A stored settings value (e.g. a storage.onChanged oldValue) as clean settings. */
+export function parseSettings(raw: unknown): Settings {
+  return cleanSettings(raw);
+}
+
 export async function getSettings(): Promise<Settings> {
   const stored = await browser.storage.local.get(SETTINGS_KEY);
   return cleanSettings(stored[SETTINGS_KEY]);

@@ -1,6 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { listedDomainFor, parseReturnTo, parseToken, scopeHintText, wrongPasswordText } from '../../entrypoints/lock/main';
+import {
+  afterUnlockText,
+  listedDomainFor,
+  parseReturnTo,
+  parseToken,
+  scopeHintText,
+  titleKey,
+  wrongPasswordText,
+} from '../../entrypoints/lock/main';
 import { countdownParts, formatCountdown, shouldRefocus } from '../../src/ui/countdown';
 
 describe('parseReturnTo', () => {
@@ -148,5 +156,25 @@ describe('warning box contrast', () => {
     ['dark', css.slice(split)],
   ])('the %s warning text is at least 4.5:1 on its background', (_theme, block) => {
     expect(contrast(token(block, 'warn'), token(block, 'warn-bg'))).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
+describe('titleKey', () => {
+  it('names the extensions page when that is what is locked', () => {
+    expect(titleKey('extensions')).toBe('lockTitleExtensions');
+    expect(titleKey('site')).toBe('lockTitle');
+    expect(titleKey(undefined)).toBe('lockTitle');
+  });
+});
+
+describe('afterUnlockText', () => {
+  it('says nothing while the tab is being sent to its page', () => {
+    expect(afterUnlockText(true, 'site', tr)).toBeUndefined();
+    expect(afterUnlockText(true, 'all', tr)).toBeUndefined();
+  });
+
+  it("never claims an unlock that opened nothing in 'site' scope", () => {
+    expect(afterUnlockText(false, 'site', tr)).toBe('unlockNothingToOpen()');
+    expect(afterUnlockText(false, 'all', tr)).toBe('unlockedNoReturn()');
   });
 });

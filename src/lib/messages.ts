@@ -6,9 +6,8 @@ export type Request =
   | { type: 'setup'; password: string }
   // From the lock page: unlocks the sites (all of them, or only the lock page's own site when
   // the unlock scope is 'site'). `token` is the lock page's `#t=` token; the target is resolved
-  // by the service worker from the token bound to the sending tab. `returnTo` is the old form
-  // (a raw URL, http(s) only) kept until the lock page sends tokens.
-  | { type: 'unlock'; password: string; token?: string; returnTo?: string }
+  // by the service worker from the token bound to the sending tab.
+  | { type: 'unlock'; password: string; token?: string }
   // From the options page: unlocks the settings only; the sites stay locked.
   | { type: 'unlockSettings'; password: string }
   | { type: 'lockNow' }
@@ -42,7 +41,11 @@ export type ErrorCode =
   /** claimTarget / describeTarget: no safe target for this tab (nothing to return to). */
   | 'invalid_target';
 
-export type Response = { ok: true; state: State } | { ok: false; error: ErrorCode; state: State };
+/**
+ * `opened` (unlock only): the unlock sent the lock page's tab to its page. False when there was
+ * nothing to open (no target for this tab); in 'site' scope nothing was unlocked then either.
+ */
+export type Response = { ok: true; state: State; opened?: boolean } | { ok: false; error: ErrorCode; state: State };
 
 /**
  * What an unlock on a lock page opens: a site (`domain` is its listed domain, the one a 'site'
@@ -78,7 +81,7 @@ export function isRequest(value: unknown): value is Request {
     case 'unlockSettings':
       return typeof v.password === 'string';
     case 'unlock':
-      return typeof v.password === 'string' && optionalString(v.returnTo) && optionalString(v.token);
+      return typeof v.password === 'string' && optionalString(v.token);
     case 'changePassword':
       return typeof v.current === 'string' && typeof v.next === 'string';
     case 'claimTarget':
